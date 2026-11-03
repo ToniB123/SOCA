@@ -57,9 +57,8 @@ from typing import Any
 
 import yaml
 
-import install_security
-import network_health as _network_health
-import user_allowlist
+from soca.core import install_security, user_allowlist
+from soca.core import network_health as _network_health
 
 try:
     import netapi as _netapi

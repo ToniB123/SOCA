@@ -45,9 +45,7 @@ import yaml
 from flask import Flask, jsonify, request, send_from_directory
 
 import finding_chat
-import install_security
-import network_health
-import user_allowlist
+from soca.core import install_security, network_health, user_allowlist
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CHECKSTAT_PATH = SCRIPT_DIR / "checkstat.py"

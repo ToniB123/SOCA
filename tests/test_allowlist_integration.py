@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 import checkstat as soc
-import user_allowlist as u
+from soca.core import user_allowlist as u
 
 
 def _options():

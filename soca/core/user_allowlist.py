@@ -31,7 +31,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-DEFAULT_ALLOWLIST_FILE = Path(__file__).resolve().parent / "soc_user_allowlist.json"
+from soca import paths
+
+DEFAULT_ALLOWLIST_FILE = paths.DEFAULT_ALLOWLIST_FILE
 
 SCHEMA_VERSION = 1
 MAX_FILE_BYTES = 256 * 1024

@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import network_health as nh
+from soca.core import network_health as nh
 
 
 def _summary(

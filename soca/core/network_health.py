@@ -38,8 +38,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from soca import paths
+
 SCHEMA_VERSION = 1
 RESULT_FILE = "soc_network_health.json"
+DEFAULT_RESULT_PATH = paths.DEFAULT_NETWORK_HEALTH_FILE
 CAVEAT = (
     "Active probes classify path symptoms only. They cannot prove an upstream "
     "DDoS and cannot see packets dropped before the NIC or inside the ISP."
@@ -871,7 +874,7 @@ class NetworkHealthMonitor(threading.Thread):
         self.options = dict(options)
         self.logger = logger
         self.result_path = Path(
-            result_path or self.options.get("result_path") or RESULT_FILE
+            result_path or self.options.get("result_path") or DEFAULT_RESULT_PATH
         )
         self._lock = threading.Lock()
         self._stop_event = threading.Event()

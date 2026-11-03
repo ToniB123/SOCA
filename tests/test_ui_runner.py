@@ -23,8 +23,8 @@ from pathlib import Path
 from unittest import mock
 
 import checkstat as soc
-import install_security
 import soc_ui as ui
+from soca.core import install_security
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RULES_FILE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"

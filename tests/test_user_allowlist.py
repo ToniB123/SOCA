@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-import user_allowlist as u
+from soca.core import user_allowlist as u
 
 # ---------------------------------------------------------------------------
 # Builders
