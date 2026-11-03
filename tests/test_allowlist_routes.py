@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import soc_ui as ui
+from soca.ui import soc_ui as ui
 
 TOKEN = "unit-test-token-0123456789abcdef"
 TIMESTAMP = "2026-11-02T20:14:57-05:00"

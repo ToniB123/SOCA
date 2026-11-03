@@ -4441,6 +4441,8 @@ class ReplayMainWiringTests(unittest.TestCase):
                         "--no-traffic",
                         "--no-whois",
                         "--no-rdns",
+                        "--rules",
+                        str(RULES_FILE),
                     ]
                 )
             report = (root / "agent.log").read_text(encoding="utf-8")

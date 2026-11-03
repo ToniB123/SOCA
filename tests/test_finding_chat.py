@@ -9,8 +9,8 @@ import urllib.error
 from email.message import Message
 from unittest import mock
 
-import finding_chat
-import soc_ui as ui
+from soca.ui import finding_chat
+from soca.ui import soc_ui as ui
 
 TOKEN = "unit-test-token-0123456789abcdef"
 

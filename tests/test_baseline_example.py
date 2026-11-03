@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 import checkstat as soc
-import soc_ui as ui
+from soca.ui import soc_ui as ui
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
