@@ -730,6 +730,73 @@ def derive_scope_from_record(
     )
 
 
+def _parse_traffic_owners(
+    traffic: dict[str, Any],
+) -> list[tuple[str, int, int]]:
+    """Parse (name, pid, count), dedupe by PID, and sort deterministically."""
+    owners: list[tuple[str, int, int]] = []
+    seen_pids: set[int] = set()
+    for item in traffic.get("udp_top_pids") or ():
+        if not isinstance(item, dict):
+            continue
+        pid = _int_or_none(item.get("pid"), minimum=1)
+        count = _int_or_none(item.get("count"), minimum=1)
+        name = str(item.get("process_name") or "").strip().lower()
+        if pid is None or count is None or not name or name == "unknown":
+            continue
+        if pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+        owners.append((name, pid, count))
+    owners.sort(key=lambda item: (-item[2], item[0], item[1]))
+    return owners
+
+
+def _aggregate_owners(
+    owners: list[tuple[str, int, int]],
+) -> list[dict[str, Any]]:
+    """Aggregate per-PID owners by process name, ranked by total sockets."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for name, pid, count in owners:
+        entry = by_name.setdefault(
+            name, {"process_name": name, "count": 0, "pids": []}
+        )
+        entry["count"] += count
+        entry["pids"].append((pid, count))
+    ranked: list[dict[str, Any]] = []
+    for entry in by_name.values():
+        pids = [
+            pid
+            for pid, _count in sorted(
+                entry["pids"], key=lambda item: (-item[1], item[0])
+            )
+        ]
+        ranked.append({
+            "process_name": entry["process_name"],
+            "count": entry["count"],
+            "pids": pids,
+        })
+    ranked.sort(key=lambda item: (-item["count"], item["process_name"]))
+    return ranked
+
+
+def _traffic_denominator(
+    traffic: dict[str, Any], owners: list[tuple[str, int, int]]
+) -> tuple[int | None, str | None, bool]:
+    """Return (denominator, source, approximate).
+
+    Prefer the persisted UDP socket count; otherwise use the sampled top-3
+    owners, matching the agent's observation.
+    """
+    persisted = _int_or_none(traffic.get("udp_socket_count"), minimum=1)
+    if persisted is not None:
+        return persisted, "udp_socket_count", False
+    fallback = sum(count for _name, _pid, count in owners[:3])
+    if fallback <= 0:
+        return None, None, True
+    return fallback, "top_owners", True
+
+
 def _derive_traffic(
     record: dict[str, Any], thresholds: dict[str, Any], severity: str
 ) -> ScopeDerivation:
@@ -745,46 +812,46 @@ def _derive_traffic(
     rate = _number(traffic.get("udp_datagrams_per_second"))
     baseline = _number(traffic.get("baseline_rate"))
     errors = _number(traffic.get("udp_errors_per_second"))
-    owners: list[tuple[str, int, int]] = []
-    for item in traffic.get("udp_top_pids") or ():
-        if not isinstance(item, dict):
-            continue
-        pid = _int_or_none(item.get("pid"), minimum=1)
-        name = str(item.get("process_name") or "").strip().lower()
-        count = _int_or_none(item.get("count"), minimum=1)
-        if pid is None or count is None or not name or name == "unknown":
-            continue
-        owners.append((name, pid, count))
+    owners = _parse_traffic_owners(traffic)
     if not owners:
         return _ineligible(
             "no_process_attribution",
             "The UDP traffic cannot be attributed to one process.",
             severity=severity,
         )
-    owners.sort(key=lambda item: (-item[2], item[0], item[1]))
-    top_name, top_pid, top_count = owners[0]
-    second = [item for item in owners[1:] if item[0] != top_name]
-    if second and second[0][2] >= top_count:
+    ranked = _aggregate_owners(owners)
+    top = ranked[0]
+    top_name = top["process_name"]
+    top_count = top["count"]
+    top_pids = list(top["pids"])
+    second = ranked[1] if len(ranked) > 1 else None
+    if second is not None and second["count"] >= top_count:
         return _ineligible(
             "ambiguous_udp_owner",
-            "Two processes share the UDP traffic; the owner is ambiguous.",
+            f"{top_name} ({top_count}) and {second['process_name']} "
+            f"({second['count']}) share the UDP sockets; the owner is ambiguous.",
             severity=severity,
         )
-    denominator = _int_or_none(traffic.get("udp_socket_count"), minimum=1)
-    approximate = denominator is None
-    if denominator is None:
-        denominator = sum(item[2] for item in owners[:3])
-    if denominator <= 0:
+    denominator, denominator_source, approximate = _traffic_denominator(
+        traffic, owners
+    )
+    if denominator is None or denominator <= 0:
         return _ineligible(
             "no_process_attribution",
             "The UDP owner share cannot be computed.",
             severity=severity,
         )
-    share = top_count / denominator
+    share = min(1.0, top_count / denominator)
     if share < MIN_SHARE:
+        prefix = "Based on the sampled owners, " if approximate else ""
+        pid_note = (
+            f", aggregated across {len(top_pids)} PIDs"
+            if len(top_pids) > 1 else ""
+        )
         return _ineligible(
             "owner_share_below_min",
-            f"The top process owns only {share:.0%} of UDP sockets.",
+            f"{prefix}{top_name} owns only {share:.0%} of UDP sockets"
+            f"{pid_note}.",
             severity=severity,
         )
     if rate is None or rate <= 0:
@@ -814,7 +881,7 @@ def _derive_traffic(
         "rule_ids": [TRAFFIC_RULE],
         "severity_at_mute": severity,
         "process_names": [top_name],
-        "pids_at_mute": [top_pid],
+        "pids_at_mute": top_pids,
         "min_share": MIN_SHARE,
         "rate_min": None,
         "rate_max": rate_max,
@@ -832,12 +899,19 @@ def _derive_traffic(
         "timestamp": record.get("timestamp"),
         "snapshot": record.get("snapshot"),
         "process_names": [top_name],
-        "pids": [top_pid],
+        "pids": top_pids,
         "udp_rate": rate,
         "baseline_rate": baseline,
         "udp_errors_per_second": errors,
-        "udp_socket_count": denominator,
+        "udp_socket_count": _int_or_none(
+            traffic.get("udp_socket_count"), minimum=1
+        ),
+        "denominator": denominator,
+        "denominator_source": denominator_source,
+        "numerator": top_count,
         "share": round(share, 4),
+        "top_owners": ranked,
+        "ambiguity_candidate": second,
     }
     warnings: list[str] = []
     if approximate:
@@ -1250,29 +1324,22 @@ def _observation_from_record(record: object) -> Observation | None:
     if not rule_ids or severity not in SEVERITY_ORDER:
         return None
     if rule_ids == (TRAFFIC_RULE,):
+        if str(record.get("source") or "") != "traffic":
+            return None
         traffic = record.get("traffic")
         if not isinstance(traffic, dict):
             return None
-        owners: list[tuple[str, int, int]] = []
-        for item in traffic.get("udp_top_pids") or ():
-            if not isinstance(item, dict):
-                continue
-            pid = _int_or_none(item.get("pid"), minimum=1)
-            count = _int_or_none(item.get("count"), minimum=1)
-            name = str(item.get("process_name") or "").strip().lower()
-            if pid is None or count is None or not name or name == "unknown":
-                continue
-            owners.append((name, pid, count))
+        owners = _parse_traffic_owners(traffic)
         if not owners:
             return None
-        owners.sort(key=lambda item: (-item[2], item[0], item[1]))
-        top_name, top_pid, _top_count = owners[0]
+        ranked = _aggregate_owners(owners)
+        top = ranked[0]
         return Observation(
             kind="traffic_udp",
             rule_ids=(TRAFFIC_RULE,),
             severity=severity,
-            process_name=top_name,
-            pid=top_pid,
+            process_name=top["process_name"],
+            pid=top["pids"][0] if top["pids"] else None,
             rate=_number(traffic.get("udp_datagrams_per_second")),
             baseline_rate=_number(traffic.get("baseline_rate")),
             udp_errors=_number(traffic.get("udp_errors_per_second")),
@@ -1280,7 +1347,7 @@ def _observation_from_record(record: object) -> Observation | None:
                 traffic.get("udp_socket_count"), minimum=1
             ),
             top_owner_counts=tuple(
-                (name, count) for name, _pid, count in owners
+                (name, count) for name, _pid, count in owners[:3]
             ),
             protocols=("UDP",),
         )
@@ -1358,3 +1425,118 @@ def match_record_for_display(
     if disposition and disposition.get("muted"):
         return disposition.get("allowlist_id")
     return None
+
+
+def describe_record(record: object) -> dict[str, Any]:
+    """Return read-only evidence for the preview, even when ineligible.
+
+    Never raises and never influences eligibility.
+    """
+    try:
+        if not isinstance(record, dict):
+            return {"kind": "unknown"}
+        rule_ids = _record_rule_ids(record)
+        severity = _record_severity(record)
+        base = {
+            "kind": "unknown",
+            "source": record.get("source"),
+            "rule_ids": rule_ids,
+            "severity": severity,
+            "timestamp": record.get("timestamp"),
+        }
+        if rule_ids == [TRAFFIC_RULE]:
+            traffic = record.get("traffic")
+            if not isinstance(traffic, dict):
+                return {**base, "kind": "traffic_udp"}
+            owners = _parse_traffic_owners(traffic)
+            ranked = _aggregate_owners(owners)
+            denominator, denominator_source, approximate = (
+                _traffic_denominator(traffic, owners)
+            )
+            top_owners = []
+            for item in ranked:
+                share = None
+                if denominator:
+                    share = round(min(1.0, item["count"] / denominator), 4)
+                top_owners.append({
+                    "process_name": item["process_name"],
+                    "count": item["count"],
+                    "pids": item["pids"],
+                    "share": share,
+                })
+            top = top_owners[0] if top_owners else None
+            second = top_owners[1] if len(top_owners) > 1 else None
+            top_count = top.get("count") if isinstance(top, dict) else None
+            second_count = (
+                second.get("count") if isinstance(second, dict) else None
+            )
+            ambiguous = bool(
+                isinstance(top_count, (int, float))
+                and isinstance(second_count, (int, float))
+                and top_count <= second_count
+            )
+            return {
+                **base,
+                "kind": "traffic_udp",
+                "process_names": [item["process_name"] for item in ranked],
+                "pids": top["pids"] if top else [],
+                "udp_rate": _number(traffic.get("udp_datagrams_per_second")),
+                "baseline_rate": _number(traffic.get("baseline_rate")),
+                "udp_errors_per_second": _number(
+                    traffic.get("udp_errors_per_second")
+                ),
+                "udp_socket_count": _int_or_none(
+                    traffic.get("udp_socket_count"), minimum=1
+                ),
+                "denominator": denominator,
+                "denominator_source": denominator_source,
+                "approximate": approximate,
+                "numerator": top["count"] if top else None,
+                "owner_share": top["share"] if top else None,
+                "top_owners": top_owners,
+                "ambiguity_candidate": second,
+                "ambiguous": ambiguous,
+            }
+        if not set(rule_ids) <= set(ROW_SCOPE_SPECS):
+            return base
+        group = record.get("group")
+        process = record.get("process")
+        group = group if isinstance(group, dict) else {}
+        process = process if isinstance(process, dict) else {}
+        name = str(
+            group.get("process_name") or process.get("name") or ""
+        ).strip().lower()
+        protocols: set[str] = set()
+        local_ports: set[int] = set()
+        for entry in group.get("entries") or ():
+            if not isinstance(entry, dict):
+                continue
+            proto = str(entry.get("protocol") or "").strip().upper()
+            if proto in {"TCP", "UDP"}:
+                protocols.add(proto)
+            port = _int_or_none(
+                entry.get("local_port"), minimum=1, maximum=65535
+            )
+            if port is not None:
+                local_ports.add(port)
+        remote = str(group.get("remote_ip") or "").strip()
+        remote_ip = None
+        if remote:
+            try:
+                remote_ip = str(ipaddress.ip_address(remote))
+            except ValueError:
+                remote_ip = None
+        return {
+            **base,
+            "kind": "row_endpoint",
+            "process_name": name,
+            "pid": _int_or_none(group.get("pid"), minimum=1),
+            "remote_ip": remote_ip,
+            "foreign_port": _int_or_none(
+                group.get("foreign_port"), minimum=1, maximum=65535
+            ),
+            "protocols": sorted(protocols),
+            "local_ports": sorted(local_ports),
+        }
+    except Exception:
+        return {"kind": "unknown"}

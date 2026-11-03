@@ -556,6 +556,173 @@ class MatchRecordForDisplayTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Owner aggregation, diagnostics, and display parity
+# ---------------------------------------------------------------------------
+
+MULTI_PID_OWNERS = [
+    {"pid": 1, "count": 8, "process_name": "svchost.exe"},
+    {"pid": 2, "count": 8, "process_name": "svchost.exe"},
+    {"pid": 3, "count": 4, "process_name": "firefox.exe"},
+]
+
+
+class AggregationTests(unittest.TestCase):
+    def test_multi_pid_share_is_aggregated(self):
+        derivation = u.derive_scope_from_record(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=20)
+        )
+        self.assertTrue(derivation.eligible)
+        scope = derivation.scope
+        assert scope is not None
+        self.assertEqual(scope["process_names"], ["svchost.exe"])
+        self.assertEqual(scope["pids_at_mute"], [1, 2])
+        source = derivation.source
+        self.assertEqual(source["numerator"], 16)
+        self.assertEqual(source["denominator"], 20)
+        self.assertEqual(source["denominator_source"], "udp_socket_count")
+        self.assertAlmostEqual(source["share"], 0.8)
+
+    def test_aggregate_top_can_differ_from_single_pid(self):
+        owners = [
+            {"pid": 1, "count": 13, "process_name": "firefox.exe"},
+            {"pid": 2, "count": 8, "process_name": "svchost.exe"},
+            {"pid": 3, "count": 8, "process_name": "svchost.exe"},
+        ]
+        derivation = u.derive_scope_from_record(
+            traffic_record(owners=owners, sockets=30)
+        )
+        self.assertTrue(derivation.eligible)
+        assert derivation.scope is not None
+        self.assertEqual(derivation.scope["process_names"], ["svchost.exe"])
+
+    def test_ambiguity_uses_aggregated_counts(self):
+        owners = [
+            {"pid": 1, "count": 5, "process_name": "firefox.exe"},
+            {"pid": 2, "count": 5, "process_name": "firefox.exe"},
+            {"pid": 3, "count": 10, "process_name": "svchost.exe"},
+        ]
+        derivation = u.derive_scope_from_record(traffic_record(owners=owners))
+        self.assertEqual(derivation.code, "ambiguous_udp_owner")
+
+    def test_aggregate_breaks_single_pid_tie(self):
+        owners = [
+            {"pid": 1, "count": 10, "process_name": "firefox.exe"},
+            {"pid": 2, "count": 6, "process_name": "svchost.exe"},
+            {"pid": 3, "count": 6, "process_name": "svchost.exe"},
+        ]
+        derivation = u.derive_scope_from_record(
+            traffic_record(owners=owners, sockets=22)
+        )
+        self.assertTrue(derivation.eligible)
+        assert derivation.scope is not None
+        self.assertEqual(derivation.scope["process_names"], ["svchost.exe"])
+
+    def test_missing_socket_count_falls_back(self):
+        derivation = u.derive_scope_from_record(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=None)
+        )
+        self.assertTrue(derivation.eligible)
+        self.assertEqual(
+            derivation.source["denominator_source"], "top_owners"
+        )
+        self.assertAlmostEqual(derivation.source["share"], 0.8)
+        self.assertTrue(derivation.warnings)
+
+    def test_reason_is_aggregate_aware(self):
+        derivation = u.derive_scope_from_record(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=40)
+        )
+        self.assertFalse(derivation.eligible)
+        assert derivation.reason is not None
+        self.assertIn("svchost.exe", derivation.reason)
+        self.assertIn("40%", derivation.reason)
+        self.assertIn("2 PIDs", derivation.reason)
+
+    def test_multi_pid_share_guard(self):
+        entry = entry_for(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=20)
+        )
+        observation = traffic_observation(
+            process_name="svchost.exe",
+            top_owner_counts=(("svchost.exe", 8), ("svchost.exe", 8)),
+            udp_socket_count=20,
+            identity_by_name=(("svchost.exe", True),),
+        )
+        disposition = u.match_observation(observation, snapshot([entry]))
+        assert disposition is not None
+        self.assertTrue(disposition["muted"])
+
+
+class DescribeRecordTests(unittest.TestCase):
+    def test_traffic_diagnostics(self):
+        diagnostics = u.describe_record(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=20)
+        )
+        self.assertEqual(diagnostics["kind"], "traffic_udp")
+        self.assertEqual(diagnostics["numerator"], 16)
+        self.assertEqual(diagnostics["denominator"], 20)
+        self.assertAlmostEqual(diagnostics["owner_share"], 0.8)
+        self.assertEqual(diagnostics["process_names"][0], "svchost.exe")
+        self.assertEqual(diagnostics["pids"], [1, 2])
+
+    def test_ineligible_still_has_diagnostics(self):
+        diagnostics = u.describe_record(
+            traffic_record(owners=MULTI_PID_OWNERS, sockets=40)
+        )
+        self.assertEqual(diagnostics["kind"], "traffic_udp")
+        self.assertAlmostEqual(diagnostics["owner_share"], 0.4)
+        self.assertTrue(diagnostics["top_owners"])
+
+    def test_row_diagnostics(self):
+        diagnostics = u.describe_record(row_record())
+        self.assertEqual(diagnostics["kind"], "row_endpoint")
+        self.assertEqual(diagnostics["process_name"], "chrome.exe")
+        self.assertEqual(diagnostics["remote_ip"], "203.0.113.10")
+        self.assertEqual(diagnostics["protocols"], ["TCP"])
+
+    def test_malformed_record(self):
+        self.assertEqual(u.describe_record("nope")["kind"], "unknown")
+
+
+class DisplayAggregationTests(unittest.TestCase):
+    def test_multi_pid_record_matches_aggregated_scope(self):
+        record = traffic_record(owners=MULTI_PID_OWNERS, sockets=20)
+        entry = entry_for(record)
+        self.assertEqual(
+            u.match_record_for_display(record, snapshot([entry])),
+            entry["id"],
+        )
+
+    def test_observation_uses_aggregate_top(self):
+        owners = [
+            {"pid": 1, "count": 13, "process_name": "firefox.exe"},
+            {"pid": 2, "count": 8, "process_name": "svchost.exe"},
+            {"pid": 3, "count": 8, "process_name": "svchost.exe"},
+        ]
+        observation = u._observation_from_record(
+            traffic_record(owners=owners, sockets=30)
+        )
+        assert observation is not None
+        self.assertEqual(observation.process_name, "svchost.exe")
+
+    def test_absolute_floor_is_honored(self):
+        record = traffic_record()
+        entry = entry_for(record)
+        self.assertIsNone(
+            u.match_record_for_display(
+                record, snapshot([entry]), absolute_floor=600.0
+            )
+        )
+
+    def test_non_traffic_source_does_not_match(self):
+        record = traffic_record(source="row")
+        entry = entry_for(traffic_record())
+        self.assertIsNone(
+            u.match_record_for_display(record, snapshot([entry]))
+        )
+
+
+# ---------------------------------------------------------------------------
 # Atomic write
 # ---------------------------------------------------------------------------
 

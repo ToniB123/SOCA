@@ -3,9 +3,11 @@
 Run with:  python -m unittest test_allowlist_routes.py
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import soc_ui as ui
 
@@ -68,7 +70,8 @@ class _ChatTailer:
         return 0
 
 
-def traffic_record(*, seq=1, rate=600.0, severity="HIGH"):
+def traffic_record(*, seq=1, rate=600.0, severity="HIGH", owners=None,
+                   sockets=6):
     return {
         "_seq": seq,
         "timestamp": TIMESTAMP,
@@ -84,8 +87,8 @@ def traffic_record(*, seq=1, rate=600.0, severity="HIGH"):
             "udp_datagrams_per_second": rate,
             "baseline_rate": 50.0,
             "udp_errors_per_second": 0.0,
-            "udp_socket_count": 6,
-            "udp_top_pids": [
+            "udp_socket_count": sockets,
+            "udp_top_pids": owners if owners is not None else [
                 {"pid": 1234, "count": 5, "process_name": "firefox.exe"},
             ],
         },
@@ -112,14 +115,18 @@ class AllowlistRouteTests(unittest.TestCase):
         self.app = self.make_app(self.records)
         self.client = self.app.test_client()
 
-    def make_app(self, records):
+    def make_app(self, records, defaults_override=None):
+        get_defaults = (
+            (lambda: defaults_override)
+            if defaults_override is not None else defaults
+        )
         app = ui.create_app(
             _FakeRunner(),  # ty: ignore[invalid-argument-type]
             _FakeConsole(),  # ty: ignore[invalid-argument-type]
             _FakeTrafficTailer(),  # ty: ignore[invalid-argument-type]
             _ChatTailer(records),  # ty: ignore[invalid-argument-type]
             _FakeStatus(),  # ty: ignore[invalid-argument-type]
-            get_defaults=defaults,
+            get_defaults=get_defaults,
             auth_token=TOKEN,
             allowlist_path=self.path,
         )
@@ -140,8 +147,14 @@ class AllowlistRouteTests(unittest.TestCase):
             "/api/allowlist", json=payload, headers=self.headers(), **kwargs
         )
 
-    def delete(self, entry_id):
-        return self.client.delete(f"/api/allowlist/{entry_id}", headers=self.headers())
+    def delete(self, entry_id, hard=False):
+        suffix = "?hard=1" if hard else ""
+        return self.client.delete(
+            f"/api/allowlist/{entry_id}{suffix}", headers=self.headers()
+        )
+
+    def clear_all(self):
+        return self.client.delete("/api/allowlist", headers=self.headers())
 
     def create_body(self, **overrides):
         body = {
@@ -335,6 +348,182 @@ class AllowlistRouteTests(unittest.TestCase):
         self.assertEqual(
             fetched["disposition"]["guard_blocked"], "identity_unverified"
         )
+
+    # -- diagnostics ------------------------------------------------------
+
+    def test_preview_includes_diagnostics(self):
+        body = self.get(
+            "/api/allowlist/preview",
+            query_string={"seq": 1, "timestamp": TIMESTAMP},
+        ).get_json()
+        diagnostics = body["diagnostics"]
+        self.assertEqual(diagnostics["kind"], "traffic_udp")
+        self.assertEqual(diagnostics["numerator"], 5)
+        self.assertEqual(diagnostics["denominator"], 6)
+        self.assertAlmostEqual(diagnostics["owner_share"], 0.8333, places=3)
+
+    def test_preview_ineligible_includes_diagnostics(self):
+        owners = [{"pid": 7, "count": 2, "process_name": "firefox.exe"}]
+        self.app = self.make_app([
+            traffic_record(owners=owners, sockets=10)
+        ])
+        self.client = self.app.test_client()
+        body = self.get(
+            "/api/allowlist/preview",
+            query_string={"seq": 1, "timestamp": TIMESTAMP},
+        ).get_json()
+        self.assertFalse(body["eligible"])
+        self.assertEqual(body["code"], "owner_share_below_min")
+        self.assertEqual(body["diagnostics"]["kind"], "traffic_udp")
+        self.assertAlmostEqual(
+            body["diagnostics"]["owner_share"], 0.2
+        )
+        self.assertTrue(body["diagnostics"]["top_owners"])
+
+    # -- hard delete ------------------------------------------------------
+
+    def test_hard_delete_removes_entry(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        response = self.delete(entry["id"], hard=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["deleted"])
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+        listed = self.get("/api/allowlist").get_json()
+        self.assertEqual(listed["active_count"], 0)
+        self.assertEqual(listed["entries"], [])
+        record = self.get("/api/findings").get_json()["records"][0]
+        self.assertNotIn("display_muted", record)
+
+    def test_hard_delete_disabled_entry(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        self.assertEqual(self.delete(entry["id"]).status_code, 200)
+        response = self.delete(entry["id"], hard=True)
+        self.assertEqual(response.status_code, 200)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+
+    def test_hard_delete_bad_id(self):
+        self.assertEqual(self.delete("not-a-uuid", hard=True).status_code, 400)
+
+    def test_hard_delete_unknown_id(self):
+        import uuid
+
+        self.assertEqual(
+            self.delete(str(uuid.uuid4()), hard=True).status_code, 404
+        )
+
+    def test_hard_delete_missing_file(self):
+        import uuid
+
+        self.assertEqual(
+            self.delete(str(uuid.uuid4()), hard=True).status_code, 404
+        )
+
+    def test_hard_delete_lock_busy(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        slot = self.app.extensions["allowlist_slot"]
+        slot.acquire()
+        try:
+            response = self.delete(entry["id"], hard=True)
+        finally:
+            slot.release()
+        self.assertEqual(response.status_code, 429)
+
+    def test_hard_delete_corrupt_file_does_not_rewrite(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        self.path.write_text("{broken", encoding="utf-8")
+        response = self.delete(entry["id"], hard=True)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "{broken")
+
+    # -- clear all --------------------------------------------------------
+
+    def test_clear_all_removes_active_and_disabled(self):
+        first = self.post(self.create_body()).get_json()["entry"]
+        self.delete(first["id"])
+        second = self.post(self.create_body()).get_json()["entry"]
+        self.assertNotEqual(first["id"], second["id"])
+        response = self.clear_all()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["cleared"], 2)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+        listed = self.get("/api/allowlist").get_json()
+        self.assertEqual(listed["status"], "ok")
+        self.assertEqual(listed["active_count"], 0)
+        self.assertEqual(listed["entries"], [])
+        record = self.get("/api/findings").get_json()["records"][0]
+        self.assertNotIn("display_muted", record)
+
+    def test_clear_all_missing_file(self):
+        response = self.clear_all()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["cleared"], 0)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+
+    def test_clear_all_repairs_corrupt_file(self):
+        self.path.write_text("{broken", encoding="utf-8")
+        response = self.clear_all()
+        self.assertEqual(response.status_code, 200)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["schema_version"], 1)
+        self.assertEqual(document["entries"], [])
+
+    def test_clear_all_repairs_oversized_file(self):
+        self.path.write_bytes(b"x" * (ui.user_allowlist.MAX_FILE_BYTES + 1))
+        response = self.clear_all()
+        self.assertEqual(response.status_code, 200)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+
+    def test_clear_all_lock_busy(self):
+        slot = self.app.extensions["allowlist_slot"]
+        slot.acquire()
+        try:
+            response = self.clear_all()
+        finally:
+            slot.release()
+        self.assertEqual(response.status_code, 429)
+
+    def test_clear_all_write_failure(self):
+        self.path.write_text(
+            json.dumps({"schema_version": 1, "entries": []}),
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            ui.user_allowlist, "write_allowlist_atomic", return_value=False
+        ):
+            response = self.clear_all()
+        self.assertEqual(response.status_code, 503)
+        document = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(document["entries"], [])
+
+    def test_clear_all_requires_auth(self):
+        response = self.client.delete("/api/allowlist")
+        self.assertEqual(response.status_code, 401)
+
+    def test_display_floor_matches_preview(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        self.assertTrue(entry["enabled"])
+        low_floor = {
+            "traffic": {
+                "thresholds": {
+                    "udp_datagrams_per_second_floor": 500,
+                    "udp_datagrams_absolute_floor": 600,
+                }
+            }
+        }
+        self.app = self.make_app(self.records, defaults_override=low_floor)
+        self.client = self.app.test_client()
+        preview = self.get(
+            "/api/allowlist/preview",
+            query_string={"seq": 1, "timestamp": TIMESTAMP},
+        ).get_json()
+        self.assertEqual(preview["code"], "absolute_flood_floor")
+        record = self.get("/api/findings").get_json()["records"][0]
+        self.assertNotIn("display_muted", record)
 
 
 if __name__ == "__main__":

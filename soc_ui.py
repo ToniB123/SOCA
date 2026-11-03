@@ -2251,7 +2251,9 @@ def create_app(
             # display-only match must not hide a finding the agent reopened.
             if snapshot is not None and not record.get("disposition"):
                 entry_id = user_allowlist.match_record_for_display(
-                    view, snapshot
+                    view,
+                    snapshot,
+                    absolute_floor=_allowlist_absolute_floor(),
                 )
                 if entry_id:
                     view["display_muted"] = True
@@ -2388,6 +2390,15 @@ def create_app(
         thresholds = traffic.get("thresholds") if isinstance(traffic, dict) else {}
         return thresholds if isinstance(thresholds, dict) else {}
 
+    def _allowlist_absolute_floor() -> float:
+        try:
+            value = float(
+                _allowlist_thresholds().get("udp_datagrams_absolute_floor")
+            )
+        except (TypeError, ValueError):
+            return user_allowlist.DEFAULT_ABSOLUTE_FLOOR
+        return value if value > 0 else user_allowlist.DEFAULT_ABSOLUTE_FLOOR
+
     def _allowlist_entry_view(entry: dict, active_ids: set[str], now: datetime) -> dict:
         view = dict(entry)
         expires = user_allowlist._parse_iso(entry.get("expires_at"))
@@ -2466,7 +2477,9 @@ def create_app(
         derivation = user_allowlist.derive_scope_from_record(
             record, _allowlist_thresholds()
         )
+        diagnostics = user_allowlist.describe_record(record)
         existing_id = None
+        snapshot = None
         if derivation.eligible and derivation.scope is not None:
             fingerprint = user_allowlist.fingerprint_scope(derivation.scope)
             snapshot = user_allowlist.load_snapshot(allowlist_path, force=True)
@@ -2474,16 +2487,26 @@ def create_app(
                 if entry.get("fingerprint") == fingerprint:
                     existing_id = entry.get("id")
                     break
+        if existing_id is None and snapshot is not None:
+            existing_id = user_allowlist.match_record_for_display(
+                record,
+                snapshot,
+                absolute_floor=_allowlist_absolute_floor(),
+            )
         rule = record.get("rule") if isinstance(record.get("rule"), dict) else {}
+        rule_ids = rule.get("rule_ids") or (
+            [rule.get("rule_id")] if rule.get("rule_id") else []
+        )
         return jsonify(
             eligible=derivation.eligible,
             code=derivation.code,
             reason=derivation.reason,
             severity=derivation.severity,
             rule_id=rule.get("rule_id"),
-            rule_ids=rule.get("rule_ids") or [],
-            kind=(derivation.scope or {}).get("kind"),
+            rule_ids=rule_ids,
+            kind=(derivation.scope or {}).get("kind") or diagnostics.get("kind"),
             scope=derivation.scope,
+            diagnostics=diagnostics,
             guards=list(derivation.guards),
             warnings=list(derivation.warnings),
             ttl_options=list(user_allowlist.TTL_OPTIONS),
@@ -2538,6 +2561,19 @@ def create_app(
                         code="duplicate_entry",
                         existing_id=entry.get("id"),
                     ), 409
+            # Old single-PID entries have different fingerprints but cover the
+            # corrected aggregate scope. Treat that as a duplicate too.
+            covered = user_allowlist.match_record_for_display(
+                record,
+                current,
+                absolute_floor=_allowlist_absolute_floor(),
+            )
+            if covered:
+                return jsonify(
+                    error="an active mute already covers this finding",
+                    code="duplicate_entry",
+                    existing_id=covered,
+                ), 409
             if len(entries) >= user_allowlist.MAX_ENTRIES:
                 return jsonify(error="allow-list is full", code="allowlist_full"), 409
             try:
@@ -2554,6 +2590,7 @@ def create_app(
 
     @app.route("/api/allowlist/<entry_id>", methods=["DELETE"])
     def api_allowlist_delete(entry_id: str):
+        hard = request.args.get("hard", "") == "1"
         try:
             parsed_id = uuid.UUID(entry_id)
         except ValueError, AttributeError, TypeError:
@@ -2576,6 +2613,16 @@ def create_app(
             )
             if target is None:
                 return jsonify(error="allow-list entry not found"), 404
+            if hard:
+                remaining = [
+                    entry
+                    for entry in entries
+                    if entry.get("id") != str(parsed_id)
+                ]
+                now = datetime.now(UTC)
+                if not _write_allowlist(remaining, now):
+                    return jsonify(error="allow-list write failed"), 503
+                return jsonify(entry=target, deleted=True)
             if target.get("enabled"):
                 now = datetime.now(UTC)
                 target["enabled"] = False
@@ -2583,7 +2630,29 @@ def create_app(
                 target["disabled_by"] = "dashboard"
                 if not _write_allowlist(entries, now):
                     return jsonify(error="allow-list write failed"), 503
-            return jsonify(entry=target)
+            return jsonify(entry=target, deleted=False)
+        finally:
+            allowlist_slot.release()
+
+    @app.route("/api/allowlist", methods=["DELETE"])
+    def api_allowlist_clear():
+        if not allowlist_slot.acquire(blocking=False):
+            return jsonify(error="another allow-list change is in progress"), 429
+        try:
+            snapshot = user_allowlist.load_snapshot(allowlist_path, force=True)
+            if snapshot.status == "ok":
+                cleared = len(snapshot.entries) + snapshot.invalid_entries
+            else:
+                cleared = 0
+            now = datetime.now(UTC)
+            # Always write a valid empty document. This is deliberately the
+            # repair path for a corrupt, oversized, missing, or unsupported file.
+            if not _write_allowlist([], now):
+                return jsonify(error="allow-list write failed"), 503
+            return jsonify(
+                cleared=cleared,
+                message=f"Cleared {cleared} allow-list entries.",
+            )
         finally:
             allowlist_slot.release()
 
