@@ -2,9 +2,9 @@
 
 Developer and architecture reference for SOCA (Security Operations Center
 Agent), alpha version. User-facing behavior is documented in `README.md`;
-security findings and remediation priorities are in `CODE_REVIEW.md`.
+security findings and remediation priorities are in `docs/internal/CODE_REVIEW.md`.
 
-*Last verified against the post-P3b source hashes recorded in `CODE_REVIEW.md`
+*Last verified against the post-P3b source hashes recorded in `docs/internal/CODE_REVIEW.md`
 on 2026-11-01.*
 
 ---
@@ -41,27 +41,31 @@ cannot change rule severity, run commands, or write files.
 
 ## Files
 
-| File | Purpose |
+| Path | Purpose |
 | --- | --- |
-| `checkstat.py` | Unified agent: parser, rule engine, enrichment, LLM triage, traffic detector, reporting, CLI |
-| `netapi.py` | Direct unelevated iphlpapi capture for the traffic sampler |
-| `soc_ui.py` | Localhost dashboard and process runner (spawns `checkstat.py`, reads its files) |
-| `install_security.py` | Install-ACL/elevation warnings and process-principal probes |
-| `network_health.py` | Active gateway/external probes, verdict matrix, shared result file |
-| `static/` | Dashboard assets (`index.html`, `app.css`, `app.js`) |
-| `netstat_baseline_rules.yaml` | Baseline, row rules, traffic thresholds, agent/enrichment config |
-| `test_parser.py` | Offline parser/rule/guardrail/two-tier tests |
-| `test_netapi.py` | Live and helper tests for `netapi.py` and the fast lane |
-| `test_ui_runner.py` | Offline dashboard runner, validation, path, and tailer tests |
-| `test_network_health.py` | Offline probe/aggregation/verdict/monitor tests (mocked) |
+| `checkstat.py`, `soc_ui.py` | Thin root launchers (kept for WMI detection and process adoption) |
+| `soca/paths.py` | Single source of filesystem paths (`PROJECT_ROOT`, `CONFIG_DIR`, `DATA_DIR`, `STATIC_DIR`, defaults) |
+| `soca/agent/checkstat.py` | Unified agent: parser, rule engine, enrichment, LLM triage, traffic detector, reporting, CLI |
+| `soca/agent/netapi.py` | Direct unelevated iphlpapi capture for the traffic sampler |
+| `soca/ui/soc_ui.py` | Localhost dashboard and process runner (spawns the root `checkstat.py`, reads `data/`) |
+| `soca/ui/finding_chat.py` | Read-only per-finding chat with bounded evidence context |
+| `soca/ui/static/` | Dashboard assets (`index.html`, `app.css`, `app.js`) |
+| `soca/core/install_security.py` | Install-ACL/elevation warnings and process-principal probes |
+| `soca/core/network_health.py` | Active gateway/external probes, verdict matrix, shared result file |
+| `soca/core/user_allowlist.py` | Scoped user allow-list schema, matching, and persistence |
+| `config/netstat_baseline_rules.yaml` | Live baseline, row rules, traffic thresholds, agent/enrichment config (ignored) |
+| `config/netstat_baseline_rules.example.yaml` | Sanitized example baseline (tracked) |
+| `tests/` | Offline parser, netapi, dashboard, network-health, allow-list, and chat tests |
 | `README.md` | User documentation |
-| `CODE_REVIEW.md` | Formal code review/security assessment (reviewed hashes and date) |
-| `.gitignore` | Excludes the venv and runtime artifacts |
+| `docs/internal/CODE_REVIEW.md` | Formal code review/security assessment (local-only, ignored) |
+| `.gitignore` | Excludes the venv, live config, runtime data, and internal notes |
 | `pyproject.toml`, `uv.lock` | Dependencies and pinned lockfile |
 
-Runtime files (generated, ignored): `local_soc_agent.log`,
-`netstat_snapshot.log`, `soc_findings.jsonl`, `soc_traffic_history.jsonl`,
-`soc_verdict_cache.json`, `soc_intel_cache.json`, `soc_ui_agent_state.json`.
+Runtime files (generated, ignored): everything under `data/` —
+`local_soc_agent.log`, `netstat_snapshot.log`, `soc_findings.jsonl`,
+`soc_traffic_history.jsonl`, `soc_verdict_cache.json`, `soc_intel_cache.json`,
+`soc_ui_agent_state.json`, `soc_network_health.json`, and
+`soc_user_allowlist.json`.
 
 ---
 
@@ -78,7 +82,7 @@ uv sync --frozen
 .venv\Scripts\python.exe checkstat.py
 
 # Replay saved snapshots
-.venv\Scripts\python.exe checkstat.py --file netstat_snapshot.log
+.venv\Scripts\python.exe checkstat.py --file data\netstat_snapshot.log
 
 # Rules + enrichment only
 .venv\Scripts\python.exe checkstat.py --once --no-ai --no-toast
@@ -86,10 +90,9 @@ uv sync --frozen
 # Dashboard
 .venv\Scripts\python.exe soc_ui.py
 
-# Tests
-.venv\Scripts\python.exe -B test_parser.py
-.venv\Scripts\python.exe -B test_ui_runner.py
-.venv\Scripts\python.exe -B test_netapi.py   # live; may be flaky
+# Tests (offline suite; test_netapi includes live checks and may be flaky)
+uv run python -m unittest discover -s tests -t . -v
+uv run python -m unittest tests.test_netapi -v
 ```
 
 `--once` waits for two traffic samples; with the 1 s gauge this is about a
@@ -124,7 +127,7 @@ second or two, not the old 10 s estimate.
    Failed, deferred, heuristic, or escalation-skipped verdicts are retried after
    30 minutes. The cache key includes the routine/escalation model names and the
    escalation severity list, but not thresholds or prompt version. Delete
-   `soc_verdict_cache.json` after editing detection rules.
+   `data/soc_verdict_cache.json` after editing detection rules.
 
 **Traffic findings** use the same two-tier path on the **scan lane**, with
 `traffic_ai_max_checks` as an independent budget. The **fast gauge lane** is
@@ -197,7 +200,7 @@ gateway and 1–8 configured external IP anchors every `interval_seconds`
 (default 60). IPv4 uses `IcmpSendEcho`; blocked-ICMP and IPv6 paths use a TCP
 connect fallback. Gateway discovery uses the IPv4 forward table
 (`gateway: auto`) or a configured IPv4 literal. Results are written atomically
-to `soc_network_health.json` and cached in memory for the scan report.
+to `data/soc_network_health.json` and cached in memory for the scan report.
 
 The verdict is a symptom classification: `RESPONSIVE`, `LOCAL_LINK`,
 `UPSTREAM_ISP`, `DESTINATION_PATH`, or `UNKNOWN`. Per target it records RTT
@@ -292,7 +295,7 @@ Remaining:
   influence but do not eliminate it; findings remain advisory.
 - **Lint:** `uv run ruff check .` passes with zero findings under the pinned
   rule selection. The follow-up pass (89 findings: 37 safe autofixes, 23
-  reviewed unsafe fixes, 29 manual) is recorded in CODE_REVIEW.md Appendix D
+  reviewed unsafe fixes, 29 manual) is recorded in docs/internal/CODE_REVIEW.md Appendix D
   (§11). Keep the explicit `select` list in `pyproject.toml` in sync with any
   future `noqa` use; an inert directive is itself a `RUF100` finding.
 
@@ -300,18 +303,17 @@ Remaining:
 
 ## Configuration setup
 
-The live `netstat_baseline_rules.yaml` is host-specific and gitignored. A clean
-clone must copy `netstat_baseline_rules.example.yaml` to that name and tune it
-before running:
+The live `config/netstat_baseline_rules.yaml` is host-specific and gitignored.
+A clean clone must copy the example to that name and tune it before running:
 
 ```powershell
-Copy-Item netstat_baseline_rules.example.yaml netstat_baseline_rules.yaml
+Copy-Item config\netstat_baseline_rules.example.yaml config\netstat_baseline_rules.yaml
 ```
 
 The example intentionally ships with no observed PIDs, no host application
 ports, and an empty `trusted_remote_networks` list. Add those values for your
 environment; do not commit the live file. The example is validated by
-`test_baseline_example.py`.
+`tests/test_baseline_example.py`.
 
 ## Rule engine behavior notes
 
@@ -332,7 +334,7 @@ environment; do not commit the live file. The example is validated by
 
 ### User allow-list (dashboard "Mark false positive")
 
-- The dashboard owns `soc_user_allowlist.json`; the agent only reads it, so new
+- The dashboard owns `data/soc_user_allowlist.json`; the agent only reads it, so new
   mutes apply without an agent restart. YAML edits still require one.
 - Entries are compound scopes, never rule-wide: a rule id plus an
   identity-verified process name and a rate band (NET-T10) or endpoint
@@ -388,15 +390,15 @@ environment; do not commit the live file. The example is validated by
   and range-clamped.
 - `baseline.expected_listening_ports` and `traffic_detection.ignore_local_ports`
   are separate, duplicated lists; keep them in sync if you edit them.
-- `history_file` must resolve inside the project directory; an absolute or
-  `..` path outside it is rejected at startup.
+- `history_file` must resolve inside the data directory (`data/`, or
+  `SOCA_DATA_DIR`); an absolute or `..` path outside it is rejected at startup.
 
 ---
 
 ## Configuration
 
 The YAML is the source of truth. The full schema is in
-`netstat_baseline_rules.yaml`; the keys that are actually read are summarized
+`config/netstat_baseline_rules.yaml`; the keys that are actually read are summarized
 here.
 
 | Key | Read by | Notes |
@@ -473,7 +475,7 @@ hard kill or an aborted dashboard Stop may skip it.
 
 ## Output and alerting
 
-Every run writes a report to `local_soc_agent.log` and prints it. Example shape:
+Every run writes a report to `data/local_soc_agent.log` and prints it. Example shape:
 
 ```text
 [1/2] [HIGH] NET-001/NET-002 Connection to Suspicious Port (x1)
@@ -488,7 +490,7 @@ Every run writes a report to `local_soc_agent.log` and prints it. Example shape:
   Action   : Review the process and its configuration.
 ```
 
-- `soc_findings.jsonl` contains the same information plus structured evidence.
+- `data/soc_findings.jsonl` contains the same information plus structured evidence.
 - **Traffic findings** print severity, rule, detail, `Recommended`, and a
   `Remediation:` line when a structured action is available. The console report
   does **not** print the traffic verdict/confidence/classification or the
@@ -533,7 +535,7 @@ Deferred triage never toasts.
   reported with minimal deterministic intel and are not cached, so a later scan
   can backfill the lookup. `IntelProvider.save()` prunes expired entries and
   caps the cache at `MAX_INTEL_CACHE_ENTRIES` (2,000).
-- **Intel cache.** `soc_intel_cache.json` stores RDAP/WHOIS/rDNS results with
+- **Intel cache.** `data/soc_intel_cache.json` stores RDAP/WHOIS/rDNS results with
   per-entry TTLs. Expired entries are pruned on save, and the cache is capped
   at 2,000 entries.
 - **Deferred queue.** `DeferredTrafficQueue` is bounded at `MAX_PENDING` (20)
@@ -544,7 +546,7 @@ Deferred triage never toasts.
   persisted in the history file so a restart does not re-admit event samples.
   `max_history_samples` is auto-raised to fit the baseline window and capped at
   `MAX_HISTORY_SAMPLES` (20,000).
-- **History.** `soc_traffic_history.jsonl` is appended on the sample cadence and
+- **History.** `data/soc_traffic_history.jsonl` is appended on the sample cadence and
   trimmed at startup to `max_history_samples` (default 1,800) only when it
   exceeds twice that many lines; it is capped/rotated at 64 MB.
 - **Logs.** `append_text()` rotates at 10 MB and deletes the existing `.1`
@@ -557,9 +559,10 @@ Deferred triage never toasts.
 
 ## Web dashboard implementation
 
-`soc_ui.py` is a Flask app that spawns `checkstat.py`, streams its stdout/stderr,
-tails `soc_findings.jsonl` and `soc_traffic_history.jsonl`, and renders the
-status strip. It writes `soc_ui_agent_state.json` for PID adoption. It binds
+`soca/ui/soc_ui.py` (launched through the root `soc_ui.py` shim) is a Flask app
+that spawns `checkstat.py`, streams its stdout/stderr, tails
+`data/soc_findings.jsonl` and `data/soc_traffic_history.jsonl`, and renders the
+status strip. It writes `data/soc_ui_agent_state.json` for PID adoption. It binds
 `127.0.0.1` only and runs the Werkzeug development server with `debug=False`,
 `use_reloader=False`.
 
@@ -591,7 +594,7 @@ Developer/security notes:
   leave a stuck state (U12).
 - `app.js` renders untrusted strings with `textContent`; there is no XSS.
 
-See `CODE_REVIEW.md` §4.2 for the full list and fixes.
+See `docs/internal/CODE_REVIEW.md` §4.2 for the full list and fixes.
 
 ---
 
@@ -654,9 +657,11 @@ See `CODE_REVIEW.md` §4.2 for the full list and fixes.
 ## Testing
 
 ```powershell
-.venv\Scripts\python.exe -B test_parser.py     # offline
-.venv\Scripts\python.exe -B test_ui_runner.py  # offline
-.venv\Scripts\python.exe -B test_netapi.py     # live; may be flaky
+# Offline suite
+uv run python -m unittest discover -s tests -t . -v
+
+# Live netapi checks; may be flaky
+uv run python -m unittest tests.test_netapi -v
 
 # Static analysis (ruff is a pinned dev dependency; config in pyproject.toml)
 uv run ruff check .
@@ -665,11 +670,11 @@ uv run ruff check . --statistics
 
 `uv run ruff check .` currently passes with zero findings. If the selection
 changes, fix safe findings with `--fix` and review any unsafe fix individually;
-see CODE_REVIEW.md Appendix D (§11) for the resolved baseline.
+see docs/internal/CODE_REVIEW.md Appendix D (§11) for the resolved baseline.
 
 Coverage and gaps:
 
-- `test_parser.py`: parsing (TCP/UDP/IPv6), rule matching, private/trusted
+- `tests/test_parser.py`: parsing (TCP/UDP/IPv6), rule matching, private/trusted
   exclusions, grouping, guardrails, two-tier escalation with fake analysts,
   1 s-cadence rate series, sustained-attack and sparse-process baselines,
   triggered-sample exclusion, counter-reset handling, history cap, traffic
@@ -682,17 +687,17 @@ Coverage and gaps:
   included-private guardrails, two-column ICMP text rows, control-character
   stripping, ANDed exception keys, deferred-queue newest retention, and
   `schema_version`.
-- `test_ui_runner.py`: argv round-trip, validation, path containment, tailer
+- `tests/test_ui_runner.py`: argv round-trip, validation, path containment, tailer
   edge cases, console cursors, Flask test-client auth/Host/Origin checks,
   adoption verification/watcher/refusal, install-ACL/elevation warnings,
   process-principal binding, input hardening, status defaults, and `/api/*`
   start/stop lifecycle/concurrency (one spawned child per race, state
   cleanup, clean/crashed exits, adopted-process stop). The replay test creates
   its own placeholder file, so the suite is hermetic on a clean tree.
-- `test_network_health.py`: offline with mocked ICMP/TCP/gateway discovery;
+- `tests/test_network_health.py`: offline with mocked ICMP/TCP/gateway discovery;
   verdict matrix, aggregation, deadline, atomic result file, and monitor
   lifecycle.
-- `test_netapi.py`: helper tests plus live `iphlpapi`/`netstat` checks, the
+- `tests/test_netapi.py`: helper tests plus live `iphlpapi`/`netstat` checks, the
   deterministic 56-byte IPv6 layout test, a live `netstat` IPv6 cross-check, and
   fast-lane guardrail/toast tests. It is live and can be flaky.
 - `VerdictCache` now has direct tests for verdict TTL, traffic TTL, alert-state
@@ -700,18 +705,19 @@ Coverage and gaps:
 - The E1 layout test now fails deterministically under the old state-first
   struct, so the decoder regression cannot recur silently.
 
-Post-follow-up baseline: `test_parser.py` 227 tests, `test_netapi.py` 41 tests,
-and `test_ui_runner.py` 137 tests with 1 skipped (file symlinks unavailable
-without developer mode), plus 35 offline `test_network_health.py` tests. A live scan with `--once --no-ai --no-toast` returned CLEAR
-with exit 0, and the live ICMP parser matched `netapi` at 27,971 messages.
+Post-follow-up baseline (before the package-layout refactor):
+`tests/test_parser.py` 227 tests, `tests/test_netapi.py` 41 tests, and
+`tests/test_ui_runner.py` 137 tests with 1 skipped (file symlinks unavailable
+without developer mode), plus 35 offline `tests/test_network_health.py` tests.
+A live scan with `--once --no-ai --no-toast` returned CLEAR with exit 0, and
+the live ICMP parser matched `netapi`.
 
-The `-B` flag avoids recreating `__pycache__/`; use it when validating before a
-clean tree check.
+Run the suites with `uv run python -m unittest discover -s tests -t . -v`.
 
 ---
 
 ## Related documents
 
 - `README.md` — user-facing usage, remediation safety, privacy/retention.
-- `CODE_REVIEW.md` — severity-ranked findings (E/U/H/M/L), verified non-findings,
+- `docs/internal/CODE_REVIEW.md` — severity-ranked findings (E/U/H/M/L), verified non-findings,
   remediation roadmap, and reproduction commands.
