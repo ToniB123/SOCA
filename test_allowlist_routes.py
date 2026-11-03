@@ -200,7 +200,9 @@ class AllowlistRouteTests(unittest.TestCase):
         self.assertEqual(body["default_ttl_days"], 30)
         self.assertEqual(body["ttl_options"], [7, 30, 90])
         self.assertTrue(body["guards"])
+        self.assertIn("Every NET-T10", body["scope_summary"])
         self.assertIsNone(body["existing_entry_id"])
+        self.assertIsNone(body["existing_entry"])
 
     def test_preview_unknown_seq(self):
         response = self.get(
@@ -361,6 +363,22 @@ class AllowlistRouteTests(unittest.TestCase):
         self.assertEqual(diagnostics["numerator"], 5)
         self.assertEqual(diagnostics["denominator"], 6)
         self.assertAlmostEqual(diagnostics["owner_share"], 0.8333, places=3)
+
+    def test_preview_existing_entry_details(self):
+        entry = self.post(self.create_body()).get_json()["entry"]
+        body = self.get(
+            "/api/allowlist/preview",
+            query_string={"seq": 1, "timestamp": TIMESTAMP},
+        ).get_json()
+        self.assertEqual(body["existing_entry_id"], entry["id"])
+        existing = body["existing_entry"]
+        self.assertEqual(existing["reason"], "YouTube/Twitch QUIC")
+        self.assertEqual(
+            existing["scope"]["process_names"], ["firefox.exe"]
+        )
+        self.assertTrue(existing["expires_at"])
+        self.assertIn("Every NET-T10", existing["scope_summary"])
+        self.assertIn("1000/s", existing["scope_summary"])
 
     def test_preview_ineligible_includes_diagnostics(self):
         owners = [{"pid": 7, "count": 2, "process_name": "firefox.exe"}]

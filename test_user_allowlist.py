@@ -722,6 +722,27 @@ class DisplayAggregationTests(unittest.TestCase):
         )
 
 
+class ScopeSummaryTests(unittest.TestCase):
+    def test_traffic_scope_summary(self):
+        entry = entry_for(traffic_record())
+        summary = u.describe_scope(entry["scope"])
+        self.assertIn("Every NET-T10", summary)
+        self.assertIn("firefox.exe", summary)
+        self.assertIn("50%", summary)
+        self.assertIn("1000/s", summary)
+
+    def test_row_scope_summary(self):
+        entry = entry_for(row_record())
+        summary = u.describe_scope(entry["scope"])
+        self.assertIn("Every NET-002", summary)
+        self.assertIn("chrome.exe", summary)
+        self.assertIn("50000", summary)
+        self.assertIn("TCP", summary)
+
+    def test_invalid_scope(self):
+        self.assertEqual(u.describe_scope(None), "")
+
+
 # ---------------------------------------------------------------------------
 # Atomic write
 # ---------------------------------------------------------------------------

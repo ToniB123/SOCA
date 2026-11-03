@@ -2391,12 +2391,10 @@ def create_app(
         return thresholds if isinstance(thresholds, dict) else {}
 
     def _allowlist_absolute_floor() -> float:
-        try:
-            value = float(
-                _allowlist_thresholds().get("udp_datagrams_absolute_floor")
-            )
-        except (TypeError, ValueError):
+        raw = _allowlist_thresholds().get("udp_datagrams_absolute_floor")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return user_allowlist.DEFAULT_ABSOLUTE_FLOOR
+        value = float(raw)
         return value if value > 0 else user_allowlist.DEFAULT_ABSOLUTE_FLOOR
 
     def _allowlist_entry_view(entry: dict, active_ids: set[str], now: datetime) -> dict:
@@ -2493,6 +2491,28 @@ def create_app(
                 snapshot,
                 absolute_floor=_allowlist_absolute_floor(),
             )
+        existing_entry = None
+        if existing_id and snapshot is not None:
+            existing_entry = next(
+                (
+                    entry
+                    for entry in user_allowlist.active_entries(snapshot)
+                    if entry.get("id") == existing_id
+                ),
+                None,
+            )
+        existing_view = None
+        if existing_entry is not None:
+            existing_view = {
+                "id": existing_entry.get("id"),
+                "reason": existing_entry.get("reason"),
+                "expires_at": existing_entry.get("expires_at"),
+                "created_at": existing_entry.get("created_at"),
+                "scope": existing_entry.get("scope"),
+                "scope_summary": user_allowlist.describe_scope(
+                    existing_entry.get("scope")
+                ),
+            }
         rule = record.get("rule") if isinstance(record.get("rule"), dict) else {}
         rule_ids = rule.get("rule_ids") or (
             [rule.get("rule_id")] if rule.get("rule_id") else []
@@ -2506,12 +2526,14 @@ def create_app(
             rule_ids=rule_ids,
             kind=(derivation.scope or {}).get("kind") or diagnostics.get("kind"),
             scope=derivation.scope,
+            scope_summary=user_allowlist.describe_scope(derivation.scope),
             diagnostics=diagnostics,
             guards=list(derivation.guards),
             warnings=list(derivation.warnings),
             ttl_options=list(user_allowlist.TTL_OPTIONS),
             default_ttl_days=user_allowlist.DEFAULT_TTL_DAYS,
             existing_entry_id=existing_id,
+            existing_entry=existing_view,
         )
 
     @app.route("/api/allowlist", methods=["POST"])

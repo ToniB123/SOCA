@@ -1540,3 +1540,37 @@ def describe_record(record: object) -> dict[str, Any]:
         }
     except Exception:
         return {"kind": "unknown"}
+
+
+def describe_scope(scope: dict[str, Any] | None) -> str:
+    """Human-readable summary of the complete match scope."""
+    if not isinstance(scope, dict):
+        return ""
+    names = ", ".join(scope.get("process_names") or ())
+    if scope.get("kind") == "traffic_udp":
+        share = float(scope.get("min_share") or MIN_SHARE)
+        rate = scope.get("rate_max")
+        rate_text = (
+            f"{float(rate):.0f}/s"
+            if isinstance(rate, (int, float)) else "the configured band"
+        )
+        return (
+            f"Every {TRAFFIC_RULE} sighting where "
+            f"{names or 'the allowed process'} owns at least {share:.0%} of "
+            f"UDP sockets and the rate is below {rate_text}."
+        )
+    if scope.get("kind") == "row_endpoint":
+        rules = ", ".join(scope.get("rule_ids") or ())
+        parts: list[str] = []
+        if scope.get("remote_ip"):
+            parts.append(str(scope["remote_ip"]))
+        if scope.get("foreign_port"):
+            parts.append(f"port {scope['foreign_port']}")
+        target = ", ".join(parts) or "the described endpoint"
+        protocols = ", ".join(scope.get("protocols") or ())
+        return (
+            f"Every {rules or 'matching rule'} connection from "
+            f"{names or 'the allowed process'} to {target} over "
+            f"{protocols or 'the described protocol'}."
+        )
+    return ""

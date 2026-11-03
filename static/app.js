@@ -1774,6 +1774,52 @@ function updateFindingCardDisposition(card, r) {
   }
   const mark = card.querySelector(".finding-allowlist-open");
   if (mark) mark.hidden = isRecordMuted(r);
+
+  const panel = card.querySelector(".finding-triage");
+  let note = card.querySelector(".finding-mute-note");
+  if (isRecordMuted(r)) {
+    const text = muteScopeText(r);
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "finding-mute-note";
+      card.insertBefore(note, panel || null);
+    }
+    note.textContent = `Mute scope: ${text || "active allow-list entry"}`;
+  } else if (note) {
+    note.remove();
+  }
+}
+
+function allowlistEntryFor(r) {
+  const id = (r && r.disposition && r.disposition.allowlist_id)
+    || (r && r.display_allowlist_id);
+  if (!id) return null;
+  return (S.findings.allowlist.entries || [])
+    .find((entry) => entry.id === id) || null;
+}
+
+function muteScopeText(r) {
+  const disposition = r && r.disposition;
+  const entry = allowlistEntryFor(r);
+  const scope = (disposition && disposition.matched_scope)
+    || (entry && entry.scope) || {};
+  const parts = [];
+  if (Array.isArray(scope.process_names) && scope.process_names.length) {
+    parts.push(scope.process_names.join(", "));
+  }
+  if (typeof scope.rate_max === "number") {
+    parts.push(`rate < ${Math.round(scope.rate_max)}/s`);
+  } else {
+    if (scope.remote_ip) parts.push(scope.remote_ip);
+    if (scope.foreign_port) parts.push(`port ${scope.foreign_port}`);
+  }
+  const reason = (disposition && disposition.reason)
+    || (entry && entry.reason);
+  if (reason) parts.push(reason);
+  const expires = (disposition && disposition.expires_at)
+    || (entry && entry.expires_at);
+  if (expires) parts.push(`expires ${expires}`);
+  return parts.join(" · ");
 }
 
 async function reloadFindings() {
@@ -2022,13 +2068,47 @@ function renderAllowlistDialog() {
     body.append(why);
   } else {
     body.append(allowlistEvidenceSection(preview));
-    body.append(allowlistScopeSection(preview));
+    const coveredEntry = preview.existing_entry;
+    const covered = Boolean(preview.existing_entry_id && coveredEntry);
+    if (covered) {
+      const section = allowlistSection("Covered by an existing mute");
+      const summary = document.createElement("p");
+      summary.className = "allowlist-scope-summary";
+      summary.textContent = coveredEntry.scope_summary
+        || "An active allow-list entry already covers this finding.";
+      section.append(summary);
+      const details = document.createElement("p");
+      details.className = "allowlist-note";
+      details.textContent = [
+        coveredEntry.reason || null,
+        coveredEntry.expires_at
+          ? `expires ${coveredEntry.expires_at}` : null,
+      ].filter(Boolean).join(" · ");
+      if (details.textContent) section.append(details);
+      const guardNote = document.createElement("p");
+      guardNote.className = "allowlist-note";
+      guardNote.textContent = "The existing entry's safety guards still "
+        + "apply (severity, rate, UDP errors, co-firing rules, identity, "
+        + "baseline).";
+      section.append(guardNote);
+      body.append(section);
+    } else {
+      body.append(allowlistScopeSection(preview));
+      if (preview.scope_summary) {
+        const summary = document.createElement("p");
+        summary.className = "allowlist-scope-summary";
+        summary.textContent = `This mutes ${preview.scope_summary
+          .charAt(0).toLowerCase()}${preview.scope_summary.slice(1)} `
+          + "— not just this record.";
+        body.append(summary);
+      }
+    }
     if (Array.isArray(preview.warnings) && preview.warnings.length) {
       const warn = allowlistSection("Warnings");
       warn.append(allowlistList(preview.warnings));
       body.append(warn);
     }
-    if (Array.isArray(preview.guards) && preview.guards.length) {
+    if (!covered && Array.isArray(preview.guards) && preview.guards.length) {
       const guards = allowlistSection("What will still alert");
       guards.append(allowlistList(preview.guards));
       body.append(guards);
@@ -2038,13 +2118,6 @@ function renderAllowlistDialog() {
     note.textContent = "Muted findings stay in soc_findings.jsonl. This "
       + "applies to future sightings; past records are not deleted.";
     body.append(note);
-    if (preview.existing_entry_id) {
-      const existing = document.createElement("p");
-      existing.className = "allowlist-warning";
-      existing.textContent = "An active allow-list entry already covers "
-        + "this finding.";
-      body.append(existing);
-    }
   }
   submit.disabled = !preview || !preview.eligible
     || Boolean(preview.existing_entry_id) || dlg.saving;

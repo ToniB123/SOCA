@@ -519,6 +519,17 @@ body.context-open { overflow: hidden; }
 .allowlist-guard-list li { margin: 3px 0; }
 .allowlist-warning { margin: 0; color: var(--warning-mark); font-size: 12.5px; }
 .allowlist-note { margin: 0; color: var(--muted); font-size: 12px; }
+.allowlist-scope-summary {
+  margin: 0; padding: 8px 10px; color: var(--ink-2); font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); overflow-wrap: anywhere;
+}
+.finding-mute-note {
+  margin-top: 2px; padding: 4px 8px; color: var(--muted); font-size: 11.5px;
+  border-left: 2px solid var(--good);
+  background: color-mix(in srgb, var(--good) 6%, var(--surface));
+  overflow-wrap: anywhere;
+}
 .allowlist-form {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   padding: 10px 14px; border-top: 1px solid var(--grid);

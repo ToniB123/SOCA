@@ -343,6 +343,9 @@ environment; do not commit the live file. The example is validated by
   PIDs of the winning process. `describe_record()` returns the observed
   evidence (numerator, denominator, owner share, top owners, PIDs) even when a
   finding is ineligible, and the preview always includes it.
+  `describe_scope()` produces the `scope_summary` that states the complete
+  match scope, and muted cards show the covering entry's scope, reason, and
+  expiry.
 - `DELETE /api/allowlist/<id>` soft-disables (Deactivate). Add `?hard=1` to
   remove the entry permanently. `DELETE /api/allowlist` clears all entries,
   writes a valid empty document, and is the repair path for a corrupt,

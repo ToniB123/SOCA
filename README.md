@@ -756,8 +756,11 @@ exceptions require executable identity evidence by default. Delete
 For a single noisy finding (for example NET-T10 while streaming video), use
 **Mark false positive** on the finding card instead. The preview always shows
 the observed evidence (process/PIDs, UDP rate, baseline, errors, socket count,
-owner share, top owners) plus the scope and the guards that will reopen it; an
-ineligible finding explains why and how to proceed. The dashboard creates a
+owner share, top owners) plus the scope and the guards that will reopen it, and
+spells out the full match scope (for NET-T10: every sighting where the process
+owns at least 50% of UDP sockets and the rate is below the band — not just the
+clicked record). An ineligible finding explains why and how to proceed. Muted
+cards show the covering entry's scope, reason, and expiry. The dashboard creates a
 scoped exception in `soc_user_allowlist.json`: the rule, the identity-verified
 owning process (all PIDs of that process are aggregated), and a rate band (or
 endpoint for row rules). It expires after 7/30/90 days (default 30) and
