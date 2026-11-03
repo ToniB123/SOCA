@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for network_health.py.
 
-Run with:  python test_network_health.py
+Run with:  uv run python -m unittest tests.test_network_health -v
 No live probes are made: IcmpSendEcho/TCP/gateway discovery are patched.
 """
 

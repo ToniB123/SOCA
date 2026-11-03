@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for the unified checkstat.py SOC agent.
 
-Run with:  python test_parser.py
+Run with:  uv run python -m unittest tests.test_parser -v
 These tests are offline: no netstat, WHOIS, DNS, or Ollama calls are made.
 """
 
@@ -18,7 +18,8 @@ from typing import Any, ClassVar
 
 import checkstat as soc
 
-RULES_FILE = Path(__file__).with_name("netstat_baseline_rules.example.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RULES_FILE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
 
 SNAPSHOT = """
   Proto  Local Address          Foreign Address        State           PID

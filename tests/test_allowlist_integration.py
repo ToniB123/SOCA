@@ -1,6 +1,6 @@
 """Integration tests for allow-list enforcement in checkstat.py.
 
-Run with:  python -m unittest test_allowlist_integration.py
+Run with:  uv run python -m unittest tests.test_allowlist_integration -v
 """
 
 import json

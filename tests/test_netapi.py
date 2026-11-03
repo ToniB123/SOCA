@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for netapi.py (direct iphlpapi capture) and the sampler's fast lane.
 
-Run with:  python test_netapi.py
+Run with:  uv run python -m unittest tests.test_netapi -v
 The API/entry tests run live: they touch only read-only, unelevated OS calls
 (connection tables, counters) and netstat subprocesses for cross-checks. No
 elevation, no network traffic is generated.

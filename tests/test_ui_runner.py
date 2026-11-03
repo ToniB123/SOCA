@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for the soc_ui.py dashboard backend.
 
-Run with:  python test_ui_runner.py
+Run with:  uv run python -m unittest tests.test_ui_runner -v
 These tests are offline: no agent process is spawned and no network call is
 made. Temp files live in system temp directories; the path-containment tests
 may create a temporary directory junction with cmd.exe, and the replay test
@@ -26,7 +26,8 @@ import checkstat as soc
 import install_security
 import soc_ui as ui
 
-RULES_FILE = Path(__file__).with_name("netstat_baseline_rules.example.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RULES_FILE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
 
 
 def _write_lines(path: Path, *lines: str) -> None:
@@ -68,7 +69,7 @@ class ArgvRoundTripTests(unittest.TestCase):
             "num_ctx": 2048, "keep_alive": "15m", "cache_hours": 2.5,
             "no_escalation": True, "no_whois": True,
             "include_private_remotes": True, "verbose": True,
-            "rules_path": "netstat_baseline_rules.example.yaml",
+            "rules_path": "config/netstat_baseline_rules.example.yaml",
             "ollama_url": "http://127.0.0.1:11434/api/generate",
         })
         self.assertEqual(errors, [])

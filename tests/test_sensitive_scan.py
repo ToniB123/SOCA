@@ -1,6 +1,6 @@
 """Tests for the pre-commit sensitive-data scanner.
 
-Run with:  python -m unittest test_sensitive_scan.py
+Run with:  uv run python -m unittest tests.test_sensitive_scan -v
 """
 
 import importlib.util
@@ -8,7 +8,8 @@ import sys
 import unittest
 from pathlib import Path
 
-SCANNER_PATH = Path(__file__).with_name("scripts") / "check_sensitive_data.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCANNER_PATH = REPO_ROOT / "scripts" / "check_sensitive_data.py"
 _spec = importlib.util.spec_from_file_location("sensitive_scan", SCANNER_PATH)
 assert _spec and _spec.loader
 scan = importlib.util.module_from_spec(_spec)

@@ -29,12 +29,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".venv", "__pycache__", ".ruff_cache", ".idea", "archive"}
+SKIP_DIRS = {".git", ".venv", "__pycache__", ".ruff_cache", ".idea", "archive", "data"}
 SKIP_FILES = {
     "scripts/check_sensitive_data.py",
     ".githooks/pre-commit",
     # The scanner's own tests contain synthetic personal paths/names.
-    "test_sensitive_scan.py",
+    "tests/test_sensitive_scan.py",
 }
 DOC_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
 SYNTHETIC_PRIVATE_IPS = {

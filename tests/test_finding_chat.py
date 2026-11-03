@@ -1,6 +1,6 @@
 """Offline tests for the read-only finding chat (finding_chat.py + route).
 
-Run with:  python -m unittest test_finding_chat.py
+Run with:  uv run python -m unittest tests.test_finding_chat -v
 """
 
 import json

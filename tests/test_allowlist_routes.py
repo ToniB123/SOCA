@@ -1,6 +1,6 @@
 """Route tests for the dashboard allow-list API.
 
-Run with:  python -m unittest test_allowlist_routes.py
+Run with:  uv run python -m unittest tests.test_allowlist_routes -v
 """
 
 import json
