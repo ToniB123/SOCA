@@ -22,7 +22,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import checkstat as soc
+from soca.agent import checkstat as soc
 from soca.core import install_security
 from soca.ui import soc_ui as ui
 

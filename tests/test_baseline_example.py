@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-import checkstat as soc
+from soca.agent import checkstat as soc
 from soca.ui import soc_ui as ui
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

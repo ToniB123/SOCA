@@ -18,8 +18,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-import checkstat as soc
-import netapi
+from soca.agent import checkstat as soc
+from soca.agent import netapi
 
 
 class ApiHelpersTest(unittest.TestCase):

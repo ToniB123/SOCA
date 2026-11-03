@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import checkstat as soc
+from soca.agent import checkstat as soc
 from soca.core import user_allowlist as u
 
 
