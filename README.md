@@ -8,8 +8,7 @@ anomalies. It runs entirely on one workstation and has no cloud dependency.
 > **Alpha status.** This is a personal, single-user alpha. Flags, file formats,
 > thresholds, and detection behavior may change. It is not an EDR/AV replacement,
 > does not inspect files, memory, or packet payloads, and is not safe to expose
-> beyond a single-user machine. Read the known limitations below and
-> `docs/internal/CODE_REVIEW.md` before relying on it.
+> beyond a single-user machine.
 
 ---
 
