@@ -338,6 +338,18 @@ environment; do not commit the live file. The example is validated by
   identity-verified process name and a rate band (NET-T10) or endpoint
   (NET-001/002/007/009; NET-002/NET-009 pin the remote IP). TTL is 7/30/90 days
   (default 30). CRITICAL findings can never be muted.
+- NET-T10 owner attribution aggregates every sampled PID by process name. The
+  50% share and the ambiguity check use the aggregate; `pids_at_mute` stores all
+  PIDs of the winning process. `describe_record()` returns the observed
+  evidence (numerator, denominator, owner share, top owners, PIDs) even when a
+  finding is ineligible, and the preview always includes it.
+- `DELETE /api/allowlist/<id>` soft-disables (Deactivate). Add `?hard=1` to
+  remove the entry permanently. `DELETE /api/allowlist` clears all entries,
+  writes a valid empty document, and is the repair path for a corrupt,
+  oversized, missing, or unsupported file.
+- `GET /api/findings` passes the configured
+  `udp_datagrams_absolute_floor` to the display matcher, so display matching
+  and the preview use the same rate ceiling.
 - Matching annotates the finding with a `disposition` object; the record is
   always logged with its deterministic severity unchanged. The dashboard hides
   it from ALL/severity views and shows it under MUTED.

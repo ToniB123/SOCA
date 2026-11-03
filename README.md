@@ -754,23 +754,34 @@ exceptions require executable identity evidence by default. Delete
 `soc_verdict_cache.json` after rule changes.
 
 For a single noisy finding (for example NET-T10 while streaming video), use
-**Mark false positive** on the finding card instead. The dashboard creates a
+**Mark false positive** on the finding card instead. The preview always shows
+the observed evidence (process/PIDs, UDP rate, baseline, errors, socket count,
+owner share, top owners) plus the scope and the guards that will reopen it; an
+ineligible finding explains why and how to proceed. The dashboard creates a
 scoped exception in `soc_user_allowlist.json`: the rule, the identity-verified
-owning process, and a rate band (or endpoint for row rules). It expires after
-7/30/90 days (default 30) and CRITICAL findings cannot be muted. The finding is
-still written to `soc_findings.jsonl`; the dashboard hides it from the normal
-views and keeps it under the **MUTED** filter. Safety guards reopen it
-automatically on a severity increase, a rate above the mute band, UDP errors, a
-different process owning the traffic, an unverifiable process identity, a
-co-firing flood/scan rule, or baseline drift. Allow-list changes apply without
-restarting the agent; edits to `netstat_baseline_rules.yaml` still require a
-restart. Remove entries from the **Allow-list** button next to the findings
-filter. Records written before the mute are matched for display against the
-active scope, so they stay under **MUTED** after a refresh. This display match
-cannot replay live identity/co-fire guards (a historical record has no live
-process evidence); the agent remains authoritative for new sightings, and a
-record it explicitly reopened is never re-hidden. The static baseline remains
-hand-maintained — there is no UI baseline generator.
+owning process (all PIDs of that process are aggregated), and a rate band (or
+endpoint for row rules). It expires after 7/30/90 days (default 30) and
+CRITICAL findings cannot be muted. The finding is still written to
+`soc_findings.jsonl`; the dashboard hides it from the normal views and keeps it
+under the **MUTED** filter. Safety guards reopen it automatically on a severity
+increase, a rate above the mute band, UDP errors, a different process owning the
+traffic, an unverifiable process identity, a co-firing flood/scan rule, or
+baseline drift. Allow-list changes apply without restarting the agent; edits to
+`netstat_baseline_rules.yaml` still require a restart.
+
+Use the **Allow-list** button next to the findings filter to:
+- **Deactivate** an entry (reversible; the entry remains for reference),
+- **Delete permanently** an entry (removed from the file; cannot be undone),
+- **Clear all** entries (writes an empty allow-list and also repairs a corrupt
+  or oversized file).
+
+Both removal paths un-mute matching findings so they reappear under ALL. Records
+written before the mute are matched for display against the active scope, so
+they stay under MUTED after a refresh. This display match cannot replay live
+identity/co-fire guards (a historical record has no live process evidence); the
+agent remains authoritative for new sightings, and a record it explicitly
+reopened is never re-hidden. The static baseline remains hand-maintained —
+there is no UI baseline generator.
 
 **Finding chat times out.** The finding chat defaults to
 `agent.escalation_model` (the larger 27B model). Use the **Model** selector in

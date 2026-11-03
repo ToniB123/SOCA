@@ -24,6 +24,7 @@ const S = {
     },
     allowlistDialog: null,
     allowlistManager: null,
+    allowlistConfirm: null,
   },
   range: 900,
   expandedChart: null,  // id of the chart card currently in focus mode
@@ -1202,6 +1203,7 @@ function openFindingChat(record) {
   closeFindingContext({ restoreFocus: false });
   closeAllowlistDialog({ restoreFocus: false });
   closeAllowlistManager({ restoreFocus: false });
+  closeAllowlistConfirm({ restoreFocus: false });
   if (S.expandedChart) {
     S.expandedChart = null;
     renderCharts();
@@ -1486,6 +1488,7 @@ function openFindingContext(record) {
   closeFindingContext({ restoreFocus: false });
   closeAllowlistDialog({ restoreFocus: false });
   closeAllowlistManager({ restoreFocus: false });
+  closeAllowlistConfirm({ restoreFocus: false });
   const dialog = ensureContextModal();
   const verdict = record.verdict || {};
   const ruleId = record.rule && record.rule.rule_id
@@ -1761,7 +1764,7 @@ function updateFindingCardDisposition(card, r) {
     chip.title = "The allow-list entry matched, but a safety guard "
       + "reopened this finding.";
     chips.append(chip);
-  } else if (r && r.display_muted === true) {
+  } else if (r && r.display_muted === true && isRecordMuted(r)) {
     const chip = document.createElement("span");
     chip.className = "mini-chip muted-chip";
     chip.textContent = "muted";
@@ -1931,6 +1934,7 @@ async function openAllowlistDialog(record) {
   closeFindingChat({ restoreFocus: false });
   closeFindingContext({ restoreFocus: false });
   closeAllowlistManager({ restoreFocus: false });
+  closeAllowlistConfirm({ restoreFocus: false });
   if (S.expandedChart) {
     S.expandedChart = null;
     renderCharts();
@@ -1962,7 +1966,7 @@ async function openAllowlistDialog(record) {
   renderAllowlistDialog();
   $("allowlist-backdrop").classList.remove("hidden");
   dialog.classList.remove("hidden");
-  document.body.classList.add("allowlist-open");
+  syncAllowlistBodyLock();
   dialog.focus();
   try {
     const seq = encodeURIComponent(record._seq);
@@ -1999,18 +2003,25 @@ function renderAllowlistDialog() {
     p.textContent = dlg.error || "Checking the mute scope…";
     body.append(p);
   } else if (!preview.eligible) {
-    body.append(allowlistScopeSection(preview));
+    body.append(allowlistEvidenceSection(preview));
+    const why = allowlistSection("Why this finding is not eligible");
     const p = document.createElement("p");
     p.className = "allowlist-warning";
     p.textContent = preview.reason || "This finding cannot be muted.";
-    body.append(p);
+    why.append(p);
     if (preview.code) {
       const code = document.createElement("p");
       code.className = "allowlist-note";
       code.textContent = `code: ${preview.code}`;
-      body.append(code);
+      why.append(code);
     }
+    const proceed = document.createElement("p");
+    proceed.className = "allowlist-note";
+    proceed.textContent = allowlistProceedNote(preview.code);
+    why.append(proceed);
+    body.append(why);
   } else {
+    body.append(allowlistEvidenceSection(preview));
     body.append(allowlistScopeSection(preview));
     if (Array.isArray(preview.warnings) && preview.warnings.length) {
       const warn = allowlistSection("Warnings");
@@ -2053,6 +2064,108 @@ function allowlistList(items) {
   return ul;
 }
 
+function allowlistRow(label, value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const row = document.createElement("div");
+  row.className = "allowlist-row";
+  const key = document.createElement("span");
+  key.className = "allowlist-key";
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.className = "allowlist-val";
+  val.textContent = String(value);
+  row.append(key, val);
+  return row;
+}
+
+function allowlistAppendRows(section, rows) {
+  for (const [label, value] of rows) {
+    const row = allowlistRow(label, value);
+    if (row) section.append(row);
+  }
+}
+
+function allowlistRate(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value * 10) / 10}/s` : "unavailable";
+}
+
+function allowlistEvidenceSection(preview) {
+  const diagnostics = preview.diagnostics || {};
+  const section = allowlistSection("Observed evidence");
+  const rows = [
+    ["Rule", (diagnostics.rule_ids || preview.rule_ids || []).join(", ")
+      || preview.rule_id || ""],
+    ["Severity", diagnostics.severity || preview.severity || ""],
+  ];
+  if (diagnostics.kind === "traffic_udp") {
+    const pids = Array.isArray(diagnostics.pids)
+      && diagnostics.pids.length
+      ? ` (pids ${diagnostics.pids.join(", ")})` : "";
+    rows.push(["Process",
+      `${(diagnostics.process_names || []).join(", ")}${pids}`]);
+    rows.push(["Observed UDP rate", allowlistRate(diagnostics.udp_rate)]);
+    rows.push(["Baseline", allowlistRate(diagnostics.baseline_rate)]);
+    rows.push(["UDP errors",
+      allowlistRate(diagnostics.udp_errors_per_second)]);
+    rows.push(["UDP socket count",
+      diagnostics.udp_socket_count == null
+        ? "not recorded" : diagnostics.udp_socket_count]);
+    if (typeof diagnostics.owner_share === "number") {
+      const counts = diagnostics.numerator != null
+        && diagnostics.denominator != null
+        ? ` (${diagnostics.numerator}/${diagnostics.denominator})` : "";
+      rows.push(["Owner share",
+        `${Math.round(diagnostics.owner_share * 100)}%${counts}`
+        + (diagnostics.approximate ? " · approximate" : "")]);
+    }
+    const owners = Array.isArray(diagnostics.top_owners)
+      ? diagnostics.top_owners.map((owner) => {
+        const ownerPids = Array.isArray(owner.pids) && owner.pids.length
+          ? ` pids ${owner.pids.join(", ")}` : "";
+        return `${owner.process_name} ×${owner.count}${ownerPids}`;
+      }) : [];
+    if (owners.length) rows.push(["Top owners", owners.join(" · ")]);
+    if (diagnostics.ambiguity_candidate) {
+      rows.push(["Ambiguity",
+        `${diagnostics.ambiguity_candidate.process_name} ×`
+        + `${diagnostics.ambiguity_candidate.count}`]);
+    }
+  } else if (diagnostics.kind === "row_endpoint") {
+    rows.push(["Process",
+      `${diagnostics.process_name || "unknown"}`
+      + (diagnostics.pid ? ` (pid ${diagnostics.pid})` : "")]);
+    rows.push(["Remote IP", diagnostics.remote_ip]);
+    rows.push(["Remote port", diagnostics.foreign_port]);
+    rows.push(["Protocols", (diagnostics.protocols || []).join(", ")]);
+    rows.push(["Local ports", (diagnostics.local_ports || []).join(", ")]);
+  }
+  allowlistAppendRows(section, rows);
+  return section;
+}
+
+function allowlistProceedNote(code) {
+  switch (code) {
+    case "owner_share_below_min":
+    case "ambiguous_udp_owner":
+      return "Wait for a sample where one process owns at least 50% of the "
+        + "UDP sockets, or add a rule exception in the baseline YAML.";
+    case "absolute_flood_floor":
+      return "Rates at or above the absolute flood ceiling are never muted; "
+        + "investigate the event or tune the UDP threshold.";
+    case "critical_not_mutable":
+      return "CRITICAL findings can never be muted.";
+    case "rate_unavailable":
+    case "no_process_attribution":
+    case "no_protocol_evidence":
+    case "no_endpoint":
+      return "The record lacks the evidence needed to build a safe scope. "
+        + "Wait for a richer sample or add a rule exception.";
+    default:
+      return "This finding cannot be muted. Review the reason above.";
+  }
+}
+
 function allowlistScopeSection(preview) {
   const section = allowlistSection("Scope of this mute");
   const scope = preview.scope || {};
@@ -2062,6 +2175,9 @@ function allowlistScopeSection(preview) {
     ["Process", (scope.process_names || []).join(", ")],
   ];
   if (scope.kind === "traffic_udp") {
+    if (Array.isArray(scope.pids_at_mute) && scope.pids_at_mute.length) {
+      rows.push(["PIDs", scope.pids_at_mute.join(", ")]);
+    }
     rows.push(["Rate band", `below ${scope.rate_max}/s`]);
     rows.push(["Owner share",
       `at least ${Math.round((scope.min_share || 0.5) * 100)}%`]);
@@ -2070,19 +2186,7 @@ function allowlistScopeSection(preview) {
     if (scope.foreign_port) rows.push(["Remote port", scope.foreign_port]);
     rows.push(["Protocols", (scope.protocols || []).join(", ")]);
   }
-  for (const [label, value] of rows) {
-    if (value === "" || value === null || value === undefined) continue;
-    const row = document.createElement("div");
-    row.className = "allowlist-row";
-    const key = document.createElement("span");
-    key.className = "allowlist-key";
-    key.textContent = label;
-    const val = document.createElement("span");
-    val.className = "allowlist-val";
-    val.textContent = String(value);
-    row.append(key, val);
-    section.append(row);
-  }
+  allowlistAppendRows(section, rows);
   return section;
 }
 
@@ -2094,7 +2198,7 @@ function closeAllowlistDialog(opts) {
   const backdrop = $("allowlist-backdrop");
   if (dialog) dialog.classList.add("hidden");
   if (backdrop) backdrop.classList.add("hidden");
-  document.body.classList.remove("allowlist-open");
+  syncAllowlistBodyLock();
   if (opts && opts.restoreFocus === false) return;
   const target = dlg.previousFocus;
   if (target && target.isConnected) {
@@ -2175,15 +2279,25 @@ function ensureAllowlistManager() {
   title.id = "allowlist-manager-title";
   title.textContent = "Allow-list";
   const subtitle = document.createElement("p");
+  subtitle.id = "allowlist-manager-subtitle";
   subtitle.className = "finding-chat-subtitle";
   subtitle.textContent = "Confirmed false positives for this host.";
   headMain.append(title, subtitle);
+  const actions = document.createElement("div");
+  actions.className = "allowlist-manager-actions";
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.id = "allowlist-clear-all";
+  clear.className = "btn btn-danger";
+  clear.textContent = "Clear all";
+  clear.addEventListener("click", requestClearAll);
   const close = document.createElement("button");
   close.type = "button";
   close.className = "btn btn-ghost";
   close.textContent = "Close";
   close.addEventListener("click", () => closeAllowlistManager());
-  head.append(headMain, close);
+  actions.append(clear, close);
+  head.append(headMain, actions);
 
   const body = document.createElement("div");
   body.id = "allowlist-manager-body";
@@ -2197,6 +2311,7 @@ function ensureAllowlistManager() {
 
 async function openAllowlistManager() {
   closeAllowlistDialog({ restoreFocus: false });
+  closeAllowlistConfirm({ restoreFocus: false });
   closeFindingChat({ restoreFocus: false });
   closeFindingContext({ restoreFocus: false });
   if (S.expandedChart) {
@@ -2213,7 +2328,7 @@ async function openAllowlistManager() {
   body.append(loading);
   $("allowlist-manager-backdrop").classList.remove("hidden");
   dialog.classList.remove("hidden");
-  document.body.classList.add("allowlist-open");
+  syncAllowlistBodyLock();
   dialog.focus();
   await fetchAllowlist();
   renderAllowlistManager();
@@ -2224,6 +2339,20 @@ function renderAllowlistManager() {
   if (!body || !S.findings.allowlistManager) return;
   const state = S.findings.allowlist;
   body.textContent = "";
+  const unreadable = ["unreadable", "oversized", "unsupported_version"]
+    .includes(state.status);
+  const subtitle = $("allowlist-manager-subtitle");
+  if (subtitle) {
+    const active = state.entries.filter((entry) => entry.active).length;
+    subtitle.textContent = state.entries.length
+      ? `${state.entries.length} entries · ${active} active`
+      : "No entries";
+  }
+  const clear = $("allowlist-clear-all");
+  if (clear) {
+    clear.disabled = !state.loaded
+      || !(state.entries.length > 0 || state.invalidEntries > 0 || unreadable);
+  }
   if (state.error) {
     const p = document.createElement("p");
     p.className = "allowlist-warning";
@@ -2232,9 +2361,12 @@ function renderAllowlistManager() {
   }
   if (!state.entries.length) {
     const p = document.createElement("p");
-    p.className = "empty-note";
-    p.textContent = "No allow-list entries yet. Open a finding and choose "
-      + "Mark false positive.";
+    p.className = unreadable ? "allowlist-warning" : "empty-note";
+    p.textContent = unreadable
+      ? "The allow-list file is unreadable. Use Clear all to replace it "
+        + "with an empty allow-list."
+      : "No allow-list entries yet. Open a finding and choose "
+        + "Mark false positive.";
     body.append(p);
   } else {
     for (const entry of state.entries) {
@@ -2279,50 +2411,254 @@ function allowlistManagerEntry(entry) {
     scope.remote_ip ? `remote ${scope.remote_ip}` : null,
     scope.foreign_port ? `port ${scope.foreign_port}` : null,
     entry.expires_at ? `expires ${entry.expires_at}` : null,
+    entry.disabled_at ? `disabled ${entry.disabled_at}` : null,
     entry.reason || null,
   ].filter(Boolean).join(" · ");
 
   const actions = document.createElement("div");
   actions.className = "allowlist-entry-actions";
   if (entry.active) {
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "btn btn-ghost";
-    remove.textContent = "Remove";
-    remove.addEventListener("click", () => disableAllowlistEntry(entry.id));
-    actions.append(remove);
+    const deactivate = document.createElement("button");
+    deactivate.type = "button";
+    deactivate.className = "btn btn-ghost";
+    deactivate.textContent = "Deactivate";
+    deactivate.addEventListener("click", () => deactivateAllowlistEntry(entry.id));
+    actions.append(deactivate);
   }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn btn-danger";
+  remove.textContent = "Delete permanently";
+  remove.addEventListener("click", () => requestHardDelete(entry));
+  actions.append(remove);
   card.append(head, details, actions);
   return card;
 }
 
-async function disableAllowlistEntry(id) {
+function optimisticallyUnmute(ids) {
+  for (const id of ids) S.findings.allowlist.activeIds.delete(id);
+  renderFindings();
+}
+
+async function refreshAfterAllowlistChange() {
+  await fetchAllowlist();
+  await reloadFindings();
+  renderAllowlistManager();
+}
+
+async function deactivateAllowlistEntry(id) {
+  S.findings.allowlist.error = "";
   try {
     await api(`/api/allowlist/${encodeURIComponent(id)}`, { method: "DELETE" });
   } catch (e) {
     S.findings.allowlist.error = (e && e.body && e.body.error)
-      || (e && e.message) || "Could not remove the entry.";
+      || (e && e.message) || "Could not deactivate the entry.";
     renderAllowlistManager();
     return;
   }
-  await fetchAllowlist();
-  renderAllowlistManager();
+  optimisticallyUnmute([id]);
+  await refreshAfterAllowlistChange();
+}
+
+function requestHardDelete(entry) {
+  openAllowlistConfirm({
+    kind: "delete",
+    entryId: entry.id,
+    title: "Delete allow-list entry permanently?",
+    message: "This removes the entry from soc_user_allowlist.json and "
+      + "un-mutes matching findings (they reappear under ALL). This cannot "
+      + "be undone. Use Deactivate instead to keep the entry for reference.",
+    confirmLabel: "Delete permanently",
+  });
+}
+
+function requestClearAll() {
+  const state = S.findings.allowlist;
+  const unreadable = ["unreadable", "oversized", "unsupported_version"]
+    .includes(state.status);
+  openAllowlistConfirm({
+    kind: "clear",
+    title: "Clear the entire allow-list?",
+    message: unreadable
+      ? "The allow-list file is unreadable. Clearing replaces it with an "
+        + "empty allow-list and un-mutes every finding. This cannot be undone."
+      : `This permanently deletes all ${state.entries.length} entries and `
+        + "un-mutes every finding (they reappear under ALL). This cannot be "
+        + "undone.",
+    confirmLabel: "Clear all",
+  });
 }
 
 function closeAllowlistManager(opts) {
   const mgr = S.findings.allowlistManager;
   if (!mgr) return;
+  closeAllowlistConfirm({ restoreFocus: false });
   S.findings.allowlistManager = null;
   const dialog = $("allowlist-manager-dialog");
   const backdrop = $("allowlist-manager-backdrop");
   if (dialog) dialog.classList.add("hidden");
   if (backdrop) backdrop.classList.add("hidden");
-  document.body.classList.remove("allowlist-open");
+  syncAllowlistBodyLock();
   if (opts && opts.restoreFocus === false) return;
   if (mgr.previousFocus && mgr.previousFocus.isConnected) {
     mgr.previousFocus.focus({ preventScroll: true });
   } else if ($("btn-allowlist-manage")) {
     $("btn-allowlist-manage").focus({ preventScroll: true });
+  }
+}
+
+function syncAllowlistBodyLock() {
+  document.body.classList.toggle(
+    "allowlist-open",
+    Boolean(
+      S.findings.allowlistDialog
+      || S.findings.allowlistManager
+      || S.findings.allowlistConfirm,
+    ),
+  );
+}
+
+function ensureAllowlistConfirm() {
+  let dialog = $("allowlist-confirm-dialog");
+  if (dialog) return dialog;
+  const backdrop = document.createElement("div");
+  backdrop.id = "allowlist-confirm-backdrop";
+  backdrop.className = "modal-backdrop hidden";
+  backdrop.addEventListener("click", () => closeAllowlistConfirm());
+
+  dialog = document.createElement("section");
+  dialog.id = "allowlist-confirm-dialog";
+  dialog.className =
+    "finding-chat allowlist-dialog allowlist-confirm-dialog hidden";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "allowlist-confirm-title");
+  dialog.tabIndex = -1;
+
+  const head = document.createElement("div");
+  head.className = "finding-chat-head";
+  const headMain = document.createElement("div");
+  const title = document.createElement("h3");
+  title.id = "allowlist-confirm-title";
+  headMain.append(title);
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "btn btn-ghost";
+  close.textContent = "Close";
+  close.addEventListener("click", () => closeAllowlistConfirm());
+  head.append(headMain, close);
+
+  const message = document.createElement("p");
+  message.id = "allowlist-confirm-message";
+  message.className = "allowlist-confirm-message";
+
+  const actions = document.createElement("div");
+  actions.className = "allowlist-confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn btn-ghost";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => closeAllowlistConfirm());
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.id = "allowlist-confirm-action";
+  confirm.className = "btn btn-danger";
+  confirm.addEventListener("click", () => {
+    void confirmAllowlistAction();
+  });
+  actions.append(cancel, confirm);
+
+  const status = document.createElement("p");
+  status.id = "allowlist-confirm-status";
+  status.className = "finding-chat-status";
+  status.setAttribute("role", "status");
+
+  dialog.append(head, message, actions, status);
+  document.body.append(backdrop, dialog);
+  dialog.addEventListener("keydown", (ev) => trapFocusIn(dialog, ev));
+  return dialog;
+}
+
+function openAllowlistConfirm(config) {
+  const dialog = ensureAllowlistConfirm();
+  S.findings.allowlistConfirm = {
+    ...config,
+    busy: false,
+    error: "",
+    previousFocus: document.activeElement,
+  };
+  $("allowlist-confirm-title").textContent = config.title;
+  $("allowlist-confirm-message").textContent = config.message;
+  $("allowlist-confirm-action").textContent = config.confirmLabel;
+  $("allowlist-confirm-action").disabled = false;
+  $("allowlist-confirm-status").textContent = "";
+  $("allowlist-confirm-status").classList.remove("error");
+  $("allowlist-confirm-backdrop").classList.remove("hidden");
+  dialog.classList.remove("hidden");
+  syncAllowlistBodyLock();
+  dialog.focus();
+  const cancel = dialog.querySelector(".allowlist-confirm-actions .btn-ghost");
+  if (cancel) cancel.focus();
+}
+
+function renderAllowlistConfirm() {
+  const confirm = S.findings.allowlistConfirm;
+  if (!confirm) return;
+  const action = $("allowlist-confirm-action");
+  const status = $("allowlist-confirm-status");
+  if (action) {
+    action.disabled = confirm.busy;
+    action.textContent = confirm.busy ? "Working…" : confirm.confirmLabel;
+  }
+  if (status) {
+    status.textContent = confirm.error || "";
+    status.classList.toggle("error", Boolean(confirm.error));
+  }
+}
+
+function closeAllowlistConfirm(opts) {
+  const confirm = S.findings.allowlistConfirm;
+  if (!confirm) return;
+  S.findings.allowlistConfirm = null;
+  const dialog = $("allowlist-confirm-dialog");
+  const backdrop = $("allowlist-confirm-backdrop");
+  if (dialog) dialog.classList.add("hidden");
+  if (backdrop) backdrop.classList.add("hidden");
+  syncAllowlistBodyLock();
+  if (opts && opts.restoreFocus === false) return;
+  if (confirm.previousFocus && confirm.previousFocus.isConnected) {
+    confirm.previousFocus.focus({ preventScroll: true });
+  }
+}
+
+async function confirmAllowlistAction() {
+  const confirm = S.findings.allowlistConfirm;
+  if (!confirm || confirm.busy) return;
+  confirm.busy = true;
+  confirm.error = "";
+  renderAllowlistConfirm();
+  try {
+    if (confirm.kind === "delete") {
+      await api(
+        `/api/allowlist/${encodeURIComponent(confirm.entryId)}?hard=1`,
+        { method: "DELETE" },
+      );
+      optimisticallyUnmute([confirm.entryId]);
+    } else {
+      await api("/api/allowlist", { method: "DELETE" });
+      S.findings.allowlist.activeIds.clear();
+      renderFindings();
+    }
+    closeAllowlistConfirm({ restoreFocus: false });
+    await refreshAfterAllowlistChange();
+    if ($("allowlist-manager-dialog")) $("allowlist-manager-dialog").focus();
+  } catch (e) {
+    confirm.busy = false;
+    confirm.error = (e && e.body && e.body.error) || (e && e.message)
+      || "The allow-list change failed.";
+    S.findings.allowlist.error = confirm.error;
+    renderAllowlistConfirm();
+    renderAllowlistManager();
   }
 }
 
@@ -2811,6 +3147,10 @@ document.addEventListener("visibilitychange", () => {
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
+  if (S.findings.allowlistConfirm) {
+    closeAllowlistConfirm();
+    return;
+  }
   if (S.findings.allowlistDialog) {
     closeAllowlistDialog();
     return;

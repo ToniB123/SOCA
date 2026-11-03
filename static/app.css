@@ -536,7 +536,21 @@ body.context-open { overflow: hidden; }
   border-bottom: 1px solid var(--grid);
 }
 .allowlist-entry-head { display: flex; align-items: center; gap: 8px; }
-.allowlist-entry-actions { display: flex; gap: 8px; }
+.allowlist-entry-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.allowlist-manager-actions {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.allowlist-confirm-dialog {
+  z-index: 55; height: auto; max-height: min(70vh, 420px);
+}
+#allowlist-confirm-backdrop { z-index: 50; }
+.allowlist-confirm-message {
+  margin: 0; padding: 14px; color: var(--ink-2); font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.allowlist-confirm-actions {
+  display: flex; justify-content: flex-end; gap: 8px; padding: 0 14px 12px;
+}
 body.allowlist-open { overflow: hidden; }
 
 /* ---- status strip ---- */
