@@ -1,0 +1,622 @@
+# Netstat Anomaly Detection Baseline Rules
+# Version: 1.0
+# Purpose: Define expected network behavior and detect anomalies in Windows Netstat output
+
+# Localized netstat state labels
+#
+# Live capture canonicalizes TCP states through iphlpapi, so the built-in
+# aliases for common UI languages are mainly for replay logs and
+# capture_mode: netstat. Extend this map for other languages; values must be
+# one of the canonical states (LISTENING, ESTABLISHED, SYN_SENT,
+# SYN_RECEIVED, FIN_WAIT_1, FIN_WAIT_2, TIME_WAIT, CLOSE_WAIT, CLOSING,
+# LAST_ACK, DELETE_TCB, CLOSED, UNKNOWN). Example:
+#   state_aliases:
+#     "待機中": LISTENING
+state_aliases: {}
+
+# Expected Baseline Configuration
+baseline:
+  # Expected PIDs for system services. PIDs are per-boot; prefer process_name
+  # exceptions in individual rules. Add your host's service PIDs before running.
+  system_pids:
+    - 4        # System
+  # Expected listening ports (Windows default services)
+  expected_listening_ports:
+    tcp:
+      - 135      # RPC Endpoint Mapper
+      - 139      # NetBIOS Session Service
+      - 445      # SMB
+      - 5040     # Windows Push User Services
+      - 7680     # Windows Update Delivery Optimization
+      - 49664    # RPC dynamic port range
+      - 49665    # RPC dynamic port range
+      - 49666    # RPC dynamic port range
+      - 49667    # RPC dynamic port range
+      - 49668    # RPC dynamic port range
+      - 49671    # RPC dynamic port range
+    udp:
+      - 137      # NetBIOS Name Service
+      - 138      # NetBIOS Datagram Service
+      - 1900     # SSDP (Simple Service Discovery Protocol)
+      - 5353     # mDNS
+      - 5355     # LLMNR
+      - 5050     # Yahoo Messenger (or other app)
+      - 27036    # Steam or similar
+
+  # Common legitimate application ports. Add the ports your own applications
+  # listen on before running; the example keeps only the local Ollama API.
+  application_ports:
+    - 11434     # Ollama/AI service
+
+  # Remote ports that are routine for legitimate client applications.
+  # NET-002 does not alert on these by port alone. Process-name exceptions
+  # are still preferred, because any port can carry malicious traffic.
+  benign_remote_ports:
+    - 5228      # Google FCM push
+    - 5229      # Google FCM push
+    - 5230      # Google FCM push
+    - 27015     # Source engine game server
+    - 27016     # Source engine game server
+    - 27017     # Source engine game server
+    - 27018     # Source engine game server
+    - 27019     # Source engine game server
+    - 27020     # Source engine game server
+    - 27036     # Steam
+    - 27037     # Steam
+    - 3478      # STUN/TURN
+    - 3479      # STUN/TURN
+    - 3480      # STUN/TURN
+
+# Anomaly Detection Rules
+anomaly_rules:
+
+  # HIGH SEVERITY RULES
+  high_severity:
+
+    - rule_id: "NET-001"
+      name: "Connection to Suspicious Port"
+      description: "Detect connections to known malware/RAT ports"
+      severity: HIGH
+      enabled: true
+      # Deliberately narrow: only ports with no routine legitimate client use.
+      # 22/3389/8080/8443/1080/3128/27015/5555 were removed because outbound
+      # SSH, the RDP client, dev servers, proxies and game servers use them
+      # constantly and produced false HIGH alerts. If you need coverage for
+      # those, add a process_name exception or a separate lower-severity rule.
+      conditions:
+        - field: "foreign_port"
+          operator: "in"
+          values:
+            - 4444     # Metasploit default
+            - 6666     # IRC (common in malware)
+            - 6667     # IRC
+            - 6668     # IRC
+            - 6669     # IRC
+            - 31337    # Back Orifice
+            - 12345    # NetBus
+            - 54320    # Back Orifice 2000
+            - 54321    # Back Orifice 2000
+
+    - rule_id: "NET-002"
+      name: "Connection to Non-Standard High Port"
+      description: "Detect outbound connections to untrusted remotes on uncommon high ports"
+      severity: MEDIUM
+      enabled: true
+      # The engine skips any rule whose conditions reference a remote field
+      # when the remote is loopback/link-local/private (unless
+      # --include-private-remotes is set), so this rule sees external remotes
+      # only. That is intentional for an internet-facing attack monitor.
+      conditions:
+        - field: "foreign_port"
+          operator: "gt"
+          value: "1024"
+        - field: "foreign_port"
+          operator: "not_in"
+          values: [443, 80, 8080, 8443]
+        - field: "foreign_port"
+          operator: "not_in"
+          reference: "baseline.benign_remote_ports"
+        - field: "state"
+          operator: "in"
+          values: ["ESTABLISHED", "CLOSE_WAIT"]
+        - field: "remote_ip"
+          operator: "not_in_network"
+          reference: "trusted_remote_networks"
+      exceptions:
+        # Prefer process identity over IP ranges. Cloud ranges change and a
+        # whole cloud /16 can host attacker infrastructure.
+        - process_name: ["steam.exe", "steamwebhelper.exe", "steamservice.exe"]
+        - process_name: ["discord.exe", "discordcanary.exe", "discordptb.exe"]
+        - process_name: ["teams.exe", "ms-teams.exe", "zoom.exe", "slack.exe"]
+        - process_name: ["onedrive.exe", "dropbox.exe", "spotify.exe"]
+
+    - rule_id: "NET-003"
+      name: "Unexpected Listening Port"
+      description: "Detect new listening ports not in baseline"
+      severity: HIGH
+      enabled: false  # Disabled - needs tuning for port ranges
+      conditions:
+        - field: "state"
+          operator: "equals"
+          value: "LISTENING"
+        - field: "local_ip"
+          operator: "not_equals"
+          value: "127.0.0.1"
+        - field: "local_port"
+          operator: "not_in"
+          reference: "baseline.expected_listening_ports.tcp"
+        - field: "local_port"
+          operator: "not_in"
+          reference: "baseline.application_ports"
+      exceptions:
+        - local_port_range: "49615-49668"  # Windows RPC dynamic range
+
+    - rule_id: "NET-004"
+      name: "Connection from Unknown PID"
+      description: "Detect connections from processes not in expected baseline"
+      severity: HIGH
+      enabled: false  # Disabled initially to tune baseline
+      conditions:
+        - field: "pid"
+          operator: "not_in"
+          reference: "baseline.system_pids"
+        - field: "pid"
+          operator: "not_in"
+          reference: "observed_legitimate_pids"
+      threshold:
+        consecutive_occurrences: 3
+        time_window: "15 minutes"
+
+    - rule_id: "NET-005"
+      name: "Reverse Shell Pattern"
+      description: "Detect potential reverse shell (rapid connections to same remote IP)"
+      severity: CRITICAL
+      enabled: false  # Requires historical data tracking
+      conditions:
+        - field: "state"
+          operator: "in"
+          values: ["ESTABLISHED", "CLOSE_WAIT"]
+        - field: "remote_ip"
+          operator: "same_as_previous"
+        - field: "local_port"
+          operator: "changes_rapidly"
+          threshold: 5  # 5 different local ports to same remote IP in 5 minutes
+      time_window: "5 minutes"
+
+  # MEDIUM SEVERITY RULES
+  medium_severity:
+
+    - rule_id: "NET-006"
+      name: "Excessive Outbound Connections"
+      description: "Detect unusually high number of outbound connections from single PID"
+      severity: MEDIUM
+      enabled: false  # Requires aggregation logic
+      conditions:
+        - field: "pid"
+          operator: "count_outbound"
+          threshold: 50  # More than 50 connections from single PID
+      time_window: "5 minutes"
+
+    - rule_id: "NET-007"
+      name: "Connection to Legacy Cleartext Service"
+      description: "Detect cleartext mail/FTP/telnet ports that are rarely used by modern clients"
+      severity: MEDIUM
+      enabled: true
+      # 53 and 80 were removed: plaintext DNS and HTTP are normal, not
+      # exploits. This rule is about legacy cleartext services.
+      conditions:
+        - field: "foreign_port"
+          operator: "in"
+          values: [21, 23, 25, 110, 143, 465, 587, 993, 995]
+        - field: "remote_ip"
+          operator: "not_in_network"
+          reference: "trusted_remote_networks"
+      exceptions:
+        # Process identity, not PIDs: DNS/mail client PIDs change every boot.
+        - process_name: ["outlook.exe", "thunderbird.exe", "foxmail.exe", "windows mail.exe"]
+        - process_name: ["filezilla.exe", "winscp.exe", "putty.exe", "telnet.exe"]
+
+    - rule_id: "NET-008"
+      name: "New Remote IP Connection"
+      description: "Detect connections to previously unseen remote IP addresses"
+      severity: MEDIUM
+      enabled: false  # Requires historical data tracking
+      conditions:
+        - field: "remote_ip"
+          operator: "not_in_history"
+        - field: "state"
+          operator: "equals"
+          value: "ESTABLISHED"
+      learning_period: "24 hours"  # Learn baseline IPs over 24 hours
+
+    - rule_id: "NET-009"
+      name: "UDP Connection to Specific Remote IP"
+      description: "Detect connected UDP sockets on uncommon remote ports (unusual)"
+      severity: LOW
+      enabled: true
+      conditions:
+        - field: "protocol"
+          operator: "equals"
+          value: "UDP"
+        - field: "foreign_address"
+          operator: "not_wildcard"  # Not *:*
+        # Connected UDP is normal for QUIC, DNS, STUN/TURN, NTP, mDNS and
+        # SSDP. Exclude those so the rule only surfaces genuinely odd UDP.
+        - field: "foreign_port"
+          operator: "not_in"
+          values: [443, 123, 53, 137, 138, 1900, 3478, 3479, 3480, 5353, 5355, 546, 547]
+      exceptions:
+        - process_name: ["steam.exe", "discord.exe", "teams.exe", "ms-teams.exe", "zoom.exe"]
+        - process_name: ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"]
+        - pid: 2872    # DNS resolver
+        - pid: 17532   # mDNS
+        - pid: 14648   # SSDP/mDNS
+
+    - rule_id: "NET-010"
+      name: "Unusual TCP State Transitions"
+      description: "Detect suspicious TCP state patterns (excessive TIME_WAIT, CLOSE_WAIT)"
+      severity: MEDIUM
+      enabled: false  # Requires aggregation logic
+      conditions:
+        - field: "state"
+          operator: "in"
+          values: ["CLOSE_WAIT", "LAST_ACK", "FIN_WAIT_2"]
+        - field: "count_per_pid"
+          operator: "gt"
+          value: 10
+
+  # LOW SEVERITY RULES
+  low_severity:
+
+    - { rule_id: "NET-011", name: "High Volume of TIME_WAIT Connections", description: "Detect high volume of TIME_WAIT connections (may indicate port exhaustion)", severity: LOW, enabled: false, conditions: [ { field: "state", operator: "equals", value: "TIME_WAIT" }, { field: "count", operator: "gt", value: "20" } ], time_window: "5 minutes" }
+
+    - rule_id: "NET-012"
+      name: "Connection to Geographic Anomaly"
+      description: "Detect connections to countries not typically accessed"
+      severity: LOW
+      enabled: false  # Requires geoip database
+      conditions:
+        - field: "remote_ip_country"
+          operator: "not_in"
+          reference: "allowed_countries"
+
+    - rule_id: "NET-013"
+      name: "New Listening Port on Loopback"
+      description: "Detect new listening ports on 127.0.0.1 (potential local service)"
+      severity: LOW
+      enabled: false  # Disabled - requires tuning
+      conditions:
+        - field: "local_address"
+          operator: "equals"
+          value: "127.0.0.1"
+        - field: "state"
+          operator: "equals"
+          value: "LISTENING"
+        - field: "local_port"
+          operator: "not_in"
+          reference: "baseline.application_ports"
+      exceptions:
+        - local_port_range: "49152-65535"  # Ephemeral ports
+
+    - rule_id: "NET-014"
+      name: "IPv6 Connection to New Address"
+      description: "Detect new IPv6 remote addresses"
+      severity: LOW
+      enabled: false  # Requires historical data tracking
+      conditions:
+        - field: "protocol"
+          operator: "equals"
+          value: "TCP"
+        - field: "local_address"
+          operator: "contains"
+          value: "["
+        - field: "remote_address"
+          operator: "not_in_history"
+      learning_period: "24 hours"
+
+# Observed Legitimate PIDs
+# PIDs are per-boot and reused; prefer process_name exceptions in individual
+# rules. This list only feeds the AI prompt context and the disabled NET-004
+# rule. Leave it empty until you have tuned it for your host.
+observed_legitimate_pids: []
+
+# Trusted Remote IP Ranges
+#
+# Keep this narrow. Add CIDRs only for networks you explicitly trust.
+# Provider ranges below are examples; verify against provider-published lists
+# before enabling any of them. This list applies to both the row rules and the
+# traffic layer; a trusted NET-T02 is informational and never recommends
+# blocking.
+trusted_remote_networks: []
+  # - "151.101.0.0/16"     # Fastly
+  # - "162.159.0.0/16"     # Cloudflare
+  # - "2606:4700::/32"     # Cloudflare IPv6
+  # - "2001:4860::/32"     # Google IPv6
+
+# Alert thresholds and maintenance schedules are not configurable here. The
+# row engine evaluates every enabled rule on every scan; occurrence gating and
+# cooldowns live under `agent` (traffic_alert_min_occurrences,
+# alert_cooldown_minutes). Rule review, log retention, and baseline learning
+# are manual maintenance tasks documented in README.md; no code reads a
+# maintenance section.
+
+# Traffic / attack-signature detection
+#
+# The row rules above answer "is this connection unusual?". This section
+# answers the different question "is the host being flooded right now?".
+# A background thread samples netstat and interface counters every few
+# seconds, keeps a rolling window, and compares the latest sample against the
+# window baseline. Live mode uses all signals; --file replay uses the
+# netstat-derived signals only (no interface counters).
+traffic_detection:
+  enabled: true
+  sample_interval_seconds: 3
+  # Fast lane: refresh the state gauges (SYN counts, established, per-process
+  # maps) from the connection tables every N seconds via the direct iphlpapi
+  # calls (unelevated, ~1 ms per snapshot). New traffic findings surface as
+  # they appear on this lane instead of waiting for the next scan. History
+  # persistence and evaluation windows keep the sample cadence above.
+  gauge_interval_seconds: 1
+  # Fast-lane anti-spam for the findings feed: a key reappearing after
+  # quiet seconds counts as new; a change of condition shape re-logs at
+  # most once per min_emit seconds. First sightings are never throttled.
+  fast_finding_quiet_seconds: 120
+  fast_finding_min_emit_seconds: 60
+  # "api": direct iphlpapi capture (netapi.py); falls back to netstat
+  # subprocess parsing automatically if it fails. "netstat": always parse
+  # netstat output.
+  capture_mode: "api"
+  # After an iphlpapi failure the sampler falls back to netstat subprocesses
+  # and retries the direct API after this many seconds, re-enabling it on
+  # success.
+  api_retry_seconds: 60
+  # Relative-signal baseline. Samples in the window but newer than the guard
+  # are excluded, so a developing event cannot define "normal" while it is
+  # still changing. baseline_percentile is deliberately a LOW percentile: it
+  # estimates the host's normal floor and ignores a minority of attack
+  # samples, whereas a high percentile would be dragged up by the attack.
+  # baseline_window_seconds replaces window_seconds for evaluation;
+  # window_seconds remains only as a legacy fallback for hand-built options.
+  baseline_window_seconds: 900
+  baseline_guard_seconds: 60
+  baseline_percentile: 25
+  min_baseline_samples: 6
+  # Must be relative to SCRIPT_DIR; absolute paths and ../ escapes that leave
+  # the project directory are rejected at startup with ValueError.
+  history_file: "soc_traffic_history.jsonl"
+  max_history_samples: 1800         # 30 min at the 1 s gauge; the 900 s
+                                    # baseline fits with room for the guard
+  min_rate_seconds: 5
+  # Only count public remotes for attack findings. Set true to include LAN
+  # remotes (useful for lateral-movement detection, noisier). The
+  # --include-private-remotes CLI flag overrides this and the row-layer switch;
+  # without the flag the two layers stay independent.
+  include_private_remotes: false
+
+  # --- Bulk-transfer allowlist -------------------------------------------
+  # Game downloads and cloud sync legitimately look like a connection flood:
+  # one process opens dozens of sockets to a CDN and pulls tens of MB/s. These
+  # entries let the traffic layer recognise that shape *by owning process*.
+  #
+  # Deliberately process-scoped, not IP-scoped: CDN ranges rotate, and an
+  # attacker can host on the same CDN. A steam.exe that starts beaconing to a
+  # new remote is still worth seeing. The exemption only softens the listed
+  # rules, only when the inbound-flood signals below are quiet, and it
+  # downgrades to LOW instead of deleting the finding.
+  bulk_transfer_processes:
+    - steam.exe
+    - steamwebhelper.exe
+    - steamservice.exe
+    - epicgameslauncher.exe
+    - battle.net.exe
+    - riotclientservices.exe
+    - origin.exe
+    - eaapp.exe
+    - ubisoftconnect.exe
+    - "gog galaxy.exe"
+    - onedrive.exe
+    - dropbox.exe
+    - spotify.exe
+
+  # Traffic rules that a corroborated bulk transfer may downgrade to LOW.
+  # NET-T01/T03/T04/T08/T09 and NET-T10..NET-T13 are never exempted: they fire
+  # on the shape of a flood (SYN_RECEIVED, many remotes on one listener,
+  # discards, retransmits, UDP/ICMP storms), which a download does not produce.
+  bulk_transfer_exempt_rules:
+    - NET-T02   # single-source connection flood
+    - NET-T05   # ESTABLISHED growth
+    - NET-T06   # TIME_WAIT churn
+    - NET-T07   # inbound bandwidth spike
+    - NET-T14   # per-process connection growth
+
+  # Host-wide rules (T05/T06/T07) cannot be attributed to one socket. They are
+  # softened only when the allowlisted processes own at least this share of
+  # the host's active external connections. The share is measured during the
+  # spike, so an actual flood (which adds connections) pushes it down and
+  # re-arms the rule instead of hiding the attack.
+  bulk_transfer_min_share: 0.3
+
+  # NET-T07 is exempted only for inbound-dominated traffic (downloads), so an
+  # outbound-heavy spike is not mistakenly excused.
+  bulk_transfer_min_rx_tx_ratio: 2.0
+
+  # When true, bulk-transfer exemptions are checked against the executable
+  # path/Authenticode status resolved by the traffic sampler (one PowerShell
+  # lookup per name-cache refresh, allowlisted PIDs only). Exemptions fail
+  # closed when identity evidence is unavailable; false disables the evidence
+  # lookup and therefore denies exemptions. --no-process-details also denies.
+  bulk_transfer_verify_identity: true
+
+  thresholds:
+    # Inbound SYN flood (SYN_RECEIVED). Normal home traffic is 0.
+    syn_received_total: 10
+    syn_received_baseline_multiplier: 5
+    # Outbound SYN_SENT burst (scan or outbound flood).
+    syn_sent_total: 25
+    syn_sent_baseline_multiplier: 5
+    # One remote IP holding this many active connections.
+    connections_per_remote: 20
+    # Many different remote IPs hitting the same local listening port.
+    distinct_remotes_per_local_port: 30
+    # Connection-count growth over the rolling baseline. When no baseline is
+    # available yet, this is treated as an absolute ESTABLISHED threshold.
+    established_growth: 150
+    # Per-process connection baseline (NET-T14). Rather than comparing every
+    # process against one host-wide number, each process is compared with its
+    # own recent norm. The baseline is the median over samples where that
+    # process had connections, keyed by image name so it survives restarts.
+    per_process_min_connections: 20    # ignore small chatter entirely
+    per_process_growth_multiplier: 5   # 5x its own typical level
+    per_process_min_growth: 20         # ...and this many extra sockets
+    per_process_fanout_remotes: 10     # many remotes + ~1 conn each = scan shape
+    time_wait_total: 500
+    time_wait_baseline_multiplier: 3
+    # Interface counters (live mode only).
+    bytes_per_second_multiplier: 3.0
+    bytes_per_second_floor: 10485760   # 10 MB/s
+    discarded_packets_per_second: 20
+    tcp_retransmits_per_second: 50
+    # Cumulative TCP open counters from netstat -s. These are more reliable
+    # than the SYN_SENT/SYN_RECEIVED gauges, which miss short-lived states
+    # between 10 s samples.
+    active_opens_per_second: 50
+    active_opens_baseline_multiplier: 4
+    passive_opens_per_second: 50
+    passive_opens_baseline_multiplier: 4
+    # Per-protocol counters (live mode only; parsed from netstat -s).
+    # UDP covers QUIC/streaming too, so a baseline multiplier is applied.
+    udp_datagrams_per_second_floor: 500
+    udp_datagrams_baseline_multiplier: 3
+    icmp_messages_per_second: 100
+    # "No Ports" is a system-wide counter that also moves in noisy bursts, so
+    # require a higher floor, a baseline deviation, and the spike to persist
+    # across consecutive windows. A child delta larger than udp_received is
+    # discarded as a counter artifact.
+    udp_no_ports_per_second: 50
+    udp_no_ports_baseline_multiplier: 3
+    udp_no_ports_persistence_windows: 2
+    ip_packets_per_second_floor: 10000
+    ip_packets_baseline_multiplier: 4
+
+  # Local ports excluded from the distributed-flood rule. Windows RPC/SMB
+  # listeners are noisy and are not useful attack targets on a home host.
+  ignore_local_ports:
+    - 135
+    - 139
+    - 445
+    - 5040
+    - 7680
+    - 49664
+    - 49665
+    - 49666
+    - 49667
+    - 49668
+    - 49671
+
+# Network-health probes (attack vs ISP confidence)
+#
+# Active ICMP/TCP probes compare the default gateway with independent external
+# anchors and classify path symptoms as local-link, upstream/ISP, destination
+# path, responsive, or unknown. They CANNOT prove an upstream DDoS or see
+# packets dropped before the NIC. Disable with `--no-network-probes` or
+# `enabled: false`. Targets must be IP literals (IPv4 uses ICMP; IPv6 and
+# ICMP-blocked paths use TCP).
+network_health:
+  enabled: true
+  interval_seconds: 60
+  timeout_ms: 1000
+  probes_per_target: 4
+  degraded_loss_pct: 20
+  degraded_jitter_ms: 80
+  degraded_rtt_ms: 500
+  gateway: auto                  # auto | IPv4 literal
+  gateway_tcp_port: null         # optional TCP fallback to the gateway
+  targets:
+    - host: "1.1.1.1"
+      port: 443
+      label: "Cloudflare"
+    - host: "8.8.8.8"
+      port: 443
+      label: "Google"
+  file_max_age_seconds: 180
+
+# Local SOC agent / triage configuration
+# CLI flags override these values.
+agent:
+  # Tier 1: fast routine model for every anomaly.
+  # llama3.1:8b is fully GPU-resident (~5 GB) and takes ~10 s per verdict.
+  model: "llama3.1:8b"
+  ollama_url: "http://localhost:11434/api/generate"
+  ai_enabled: true
+  ai_timeout_seconds: 120
+  max_ai_checks_per_run: 8
+  keep_alive: "30m"
+  num_ctx: 4096
+  think: false
+
+  # Tier 2: second opinion for HIGH/CRITICAL rule hits and any
+  # SUSPICIOUS/CRITICAL routine verdict.
+  # qwen3.8:27b Q4 is ~18 GB and offloads ~60% to CPU on a 10 GB GPU.
+  # Measured on RTX 3080: ~6.4 tok/s, ~55 s for a 300-token verdict.
+  escalation_enabled: true
+  escalation_model: "qwen3.8:27b"
+  escalation_severities: ["HIGH", "CRITICAL"]
+  escalation_timeout_seconds: 180
+  max_escalations_per_run: 2
+  escalation_num_ctx: 8192
+  escalation_think: false
+  escalation_keep_alive: "30m"
+
+  # Live scan cadence. 300 s is fine with two-tier triage; use 600 s if you
+  # regularly hit the escalation budget or want lower CPU/RAM load.
+  scan_interval_seconds: 300
+
+  # Enrichment (RDAP/WHOIS/rDNS) is serial per scan. Cap the number of uncached
+  # lookups and the time spent inside them. Groups over budget are still
+  # reported with a minimal deterministic intel record, and their verdict is
+  # not cached, so a later scan can backfill the lookup.
+  max_enrichment_checks_per_run: 20
+  enrichment_budget_seconds: 20
+
+  verdict_cache_hours: 24
+  # Traffic verdicts describe a momentary traffic shape (a burst, a scan, a
+  # stream) and go stale faster than per-connection verdicts. They use their
+  # own TTL, never longer than verdict_cache_hours; a configured value below
+  # 0.1 h is raised to 0.1 h unless the row TTL itself is shorter.
+  traffic_verdict_cache_hours: 1.0
+  alert_cooldown_minutes: 60
+
+  # Traffic-layer findings run the same two-tier local triage the per-connection
+  # anomalies use (the model's verdict is attached to the record and never
+  # changes the rule severity; a confident FALSE_POSITIVE also silences only
+  # the toast, never the logged finding, and a routine-model false positive
+  # cannot silence a HIGH/CRITICAL finding unless an escalated model agreed).
+  traffic_ai_enabled: true
+  # Independent per-run budget so traffic triage never eats the per-connection
+  # anomaly budget above.
+  traffic_ai_max_checks: 2
+
+  # Traffic findings are written to soc_findings.jsonl every run, but a toast
+  # is only sent once the same finding has fired this many times inside the
+  # window. Set to 1 to be notified on the first occurrence.
+  traffic_alert_min_occurrences: 2
+  traffic_alert_window_minutes: 30
+  # Local/private LAN remotes are skipped for remote-connection rules.
+  # Set false (or pass --include-private-remotes) to catch lateral movement.
+  ignore_private_remote_ips: true
+
+  enrichment:
+    whois_enabled: true
+    whois_timeout_seconds: 8
+    whois_cache_hours: 168
+    reverse_dns_enabled: true
+    dns_timeout_seconds: 3
+    dns_cache_hours: 24
+    process_signature_enabled: true
+
+  # Name-based rule exceptions and the bulk-transfer allowlist are trusted only
+  # when the image identity can be checked. "verify" (default) and "strict"
+  # require a Valid Authenticode signature or a protected install path and deny
+  # name-only trust when evidence is inconclusive. "name" is the legacy
+  # spoofable behavior and logs a warning.
+  process_identity_mode: "verify"

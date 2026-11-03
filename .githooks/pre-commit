@@ -1,0 +1,4 @@
+#!/bin/sh
+# Block commits that would expose host data or credentials.
+# Enable with: git config core.hooksPath .githooks
+exec python scripts/check_sensitive_data.py --staged

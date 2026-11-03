@@ -1,0 +1,61 @@
+# Virtual environment
+.venv/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor/project metadata
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Legacy backups / scratch files
+archive/
+*.bak
+*.orig
+*.rej
+*.swp
+
+# Secrets and local configuration
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+secrets*
+credentials*
+*.sqlite
+*.db
+
+# Runtime artifacts (contain host, network, process, and WHOIS data)
+*.log
+local_soc_agent.log
+local_soc_agent.log.*
+netstat_snapshot.log
+netstat_snapshot.log.*
+*.jsonl
+soc_findings.jsonl
+soc_traffic_history.jsonl
+soc_verdict_cache.json
+soc_intel_cache.json
+soc_ui_agent_state.json
+soc_network_health.json
+soc_user_allowlist.json
+
+# The live, host-tuned baseline stays local. Commit only the sanitized example.
+netstat_baseline_rules.yaml
+
+# Internal security review notes stay local.
+CODE_REVIEW.md
+
+# Atomic-write temp files
+*.tmp
+
+# Skills file
+CLAUDE.md

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOC Agent Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%232a78d6'/%3E%3Crect x='4' y='7' width='8' height='2' rx='1' fill='%23fcfcfb'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <h1>SOC Agent Monitor</h1>
+    <span class="brand-sub">checkstat.py dashboard</span>
+  </div>
+  <div class="topbar-controls">
+    <button id="btn-start" type="button" class="btn btn-primary">Start agent</button>
+    <button id="btn-stop" type="button" class="btn btn-danger" disabled>Stop</button>
+    <span id="state-pill" class="pill pill-stopped" role="status">STOPPED</span>
+    <span id="state-detail" class="state-detail"></span>
+    <button id="btn-theme" type="button" class="btn btn-ghost" title="Theme">A</button>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden" role="alert"></div>
+
+<main class="layout">
+
+  <section id="controls" class="panel controls-panel">
+    <details id="controls-details">
+      <summary>
+        <span class="summary-title">Agent options</span>
+        <span id="controls-summary-note" class="summary-note"></span>
+      </summary>
+      <form id="options-form" autocomplete="off" novalidate>
+        <div class="form-grid">
+          <fieldset>
+            <legend>Cadence</legend>
+            <label class="field"><span>Scan interval (s)</span>
+              <input id="f-interval" type="number" min="15" step="1" inputmode="numeric"></label>
+            <label class="field"><span>Rules file (optional)</span>
+              <input id="f-rules-path" type="text" placeholder="netstat_baseline_rules.yaml"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Replay</legend>
+            <label class="field"><span>Snapshot file to replay</span>
+              <input id="f-replay-path" type="text" placeholder="netstat_snapshot.log"></label>
+            <p class="field-note">Replays a saved netstat snapshot log once (findings only
+              — replay samples are never written to the traffic history).</p>
+          </fieldset>
+          <fieldset>
+            <legend>Models &amp; escalation</legend>
+            <label class="field"><span>Routine model</span>
+              <input id="f-model" type="text"></label>
+            <label class="field"><span>Escalation model</span>
+              <input id="f-escalation-model" type="text"></label>
+            <label class="field field-check"><input id="f-no-escalation" type="checkbox">
+              <span>Disable two-tier triage</span></label>
+            <label class="field"><span>Max AI checks / run</span>
+              <input id="f-max-ai-checks" type="number" min="0" step="1"></label>
+            <label class="field"><span>Max escalations / run</span>
+              <input id="f-max-escalations" type="number" min="0" step="1"></label>
+            <label class="field"><span>AI timeout (s)</span>
+              <input id="f-ai-timeout" type="number" min="0" step="0.5"></label>
+            <label class="field"><span>Escalation timeout (s)</span>
+              <input id="f-escalation-timeout" type="number" min="0" step="0.5"></label>
+            <label class="field"><span>Context window (num_ctx)</span>
+              <input id="f-num-ctx" type="number" min="512" step="1"></label>
+            <label class="field"><span>Keep alive</span>
+              <input id="f-keep-alive" type="text" placeholder="30m"></label>
+            <label class="field"><span>Think</span>
+              <select id="f-think">
+                <option value="">YAML default</option>
+                <option value="on">Enabled (CLI cannot disable it)</option>
+              </select></label>
+            <label class="field"><span>Ollama URL</span>
+              <input id="f-ollama-url" type="text"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Caching</legend>
+            <label class="field"><span>Verdict cache hours</span>
+              <input id="f-cache-hours" type="number" min="0" step="0.5"></label>
+            <label class="field field-check"><input id="f-no-cache" type="checkbox">
+              <span>Ignore cached verdicts (--no-cache)</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Feature toggles</legend>
+            <label class="field field-check"><input id="f-no-ai" type="checkbox">
+              <span>Disable the LLM tiers (rules only)</span></label>
+            <label class="field field-check"><input id="f-no-traffic" type="checkbox">
+              <span>Disable traffic / attack-signature layer</span></label>
+            <label class="field field-check"><input id="f-no-whois" type="checkbox">
+              <span>Disable RDAP/WHOIS enrichment</span></label>
+            <label class="field field-check"><input id="f-no-rdns" type="checkbox">
+              <span>Disable reverse DNS</span></label>
+            <label class="field field-check"><input id="f-no-process-details" type="checkbox">
+              <span>Skip exe path &amp; signature details</span></label>
+            <label class="field field-check"><input id="f-no-toast" type="checkbox">
+              <span>Disable Windows toast notifications</span></label>
+            <label class="field field-check"><input id="f-include-private-remotes" type="checkbox">
+              <span>Evaluate private/LAN remotes</span></label>
+            <label class="field field-check"><input id="f-verbose" type="checkbox">
+              <span>Verbose diagnostics</span></label>
+          </fieldset>
+        </div>
+        <div class="form-footer">
+          <div id="yaml-chips" class="chips" title="Settings that only exist in netstat_baseline_rules.yaml"></div>
+          <div class="form-actions">
+            <span id="form-error" class="form-error" role="alert"></span>
+            <button id="btn-start-form" type="submit" class="btn btn-primary">Start agent</button>
+          </div>
+        </div>
+      </form>
+    </details>
+  </section>
+
+  <section class="charts-section">
+    <div class="section-head">
+      <h2>Traffic window</h2>
+      <div id="range-chips" class="chips" role="group" aria-label="Chart time window"></div>
+    </div>
+    <div id="charts-grid" class="charts-grid"></div>
+  </section>
+
+  <section class="mid-grid">
+    <aside id="console-panel" class="panel">
+      <div class="section-head">
+        <h2>Console</h2>
+        <button id="btn-follow" type="button" class="chip hidden">Follow ▾</button>
+      </div>
+      <div id="console-banner" class="console-banner hidden"></div>
+      <div id="console-lines" class="console-lines" tabindex="0" aria-label="Agent console output"></div>
+    </aside>
+    <article id="traffic-panel" class="panel">
+      <div class="section-head">
+        <h2>Traffic history</h2>
+        <span id="traffic-note" class="summary-note"></span>
+      </div>
+      <div id="traffic-replay-note" class="console-banner hidden"></div>
+      <div class="table-wrap">
+        <table id="traffic-table" class="data-table">
+          <thead>
+            <tr>
+              <th title="Local clock time of this traffic sample (one row per sampler interval).">Time</th>
+              <th title="TCP connections currently in the ESTABLISHED state at the sample instant (a snapshot, not a rate).">Est</th>
+              <th title="TCP sockets currently in SYN_RECEIVED — inbound half-open handshakes waiting to complete. Sustained values ≥ 10 are the SYN-flood signal (rule NET-T01).">Syn&nbsp;r</th>
+              <th title="TCP sockets currently in SYN_SENT — outbound connection attempts not yet answered.">Syn&nbsp;s</th>
+              <th title="TCP sockets in TIME_WAIT — recently closed connections lingering before cleanup.">TW</th>
+              <th title="Number of distinct remote IP addresses with active connections right now.">Remotes</th>
+              <th title="The remote IP holding the most concurrent connections at this sample (·×N = its connection count).">Top remote</th>
+              <th title="Inbound throughput in bytes per second — interface byte counter delta ÷ elapsed time since the previous sample. '–' when it cannot be computed (first sample or counter reset).">Rx/s</th>
+              <th title="Outbound throughput in bytes per second, computed the same way as Rx/s.">Tx/s</th>
+              <th title="TCP retransmissions per second — delta of the cumulative counter ÷ elapsed time. Climbing while throughput does not suggests loss or instability (attack vs ISP-problem signal).">Retr/s</th>
+              <th title="Process image name holding the most external connections in this sample (·×N = its connection count).">Top process</th>
+            </tr>
+          </thead>
+          <tbody id="traffic-body"></tbody>
+        </table>
+        <p id="traffic-empty" class="empty-note hidden">Awaiting first traffic sample…</p>
+      </div>
+    </article>
+  </section>
+
+  <section id="findings-panel" class="panel">
+    <div class="section-head">
+      <h2>Findings</h2>
+      <div class="findings-controls">
+        <div id="finding-filter" class="chips" role="group" aria-label="Filter findings"></div>
+        <button id="btn-allowlist-manage" class="chip" type="button">Allow-list</button>
+      </div>
+    </div>
+    <div id="findings-list" class="findings-list"></div>
+  </section>
+
+  <footer id="status-strip" class="status-strip" aria-label="System status"></footer>
+</main>
+
+<div id="tooltip" class="chart-tooltip hidden" aria-hidden="true"></div>
+</body>
+</html>
