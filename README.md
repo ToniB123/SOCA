@@ -9,7 +9,7 @@ anomalies. It runs entirely on one workstation and has no cloud dependency.
 > thresholds, and detection behavior may change. It is not an EDR/AV replacement,
 > does not inspect files, memory, or packet payloads, and is not safe to expose
 > beyond a single-user machine. Read the known limitations below and
-> `CODE_REVIEW.md` before relying on it.
+> `docs/internal/CODE_REVIEW.md` before relying on it.
 
 ---
 
@@ -65,7 +65,7 @@ Security posture and hardening."
 
 ## Alpha status and known limitations
 
-This build includes the P0–P3 review fixes from `CODE_REVIEW.md`:
+This build includes the P0–P3 review fixes from `docs/internal/CODE_REVIEW.md`:
 
 - **IPv6 decoder (E1) fixed.** `_Tcp6Row` now uses the documented address-first
   `MIB_TCP6ROW_OWNER_PID` layout. Tests pin every field offset and cross-check
@@ -107,7 +107,7 @@ This build includes the P0–P3 review fixes from `CODE_REVIEW.md`:
 - **Engine reliability (E6/E7/E8/E9) fixed.** `VerdictCache` is lock-protected;
   the traffic AI has a per-scan circuit breaker; corrupt verdict/intel cache
   entries are dropped instead of aborting scans; `history_file` is confined to
-  the project; enrichment has per-scan count/time budgets and the intel cache is
+  the data directory; enrichment has per-scan count/time budgets and the intel cache is
   pruned and capped.
 - **Absolute system binaries (U3) fixed.** `checkstat.py` and `soc_ui.py` invoke
   `netstat.exe`, `tasklist.exe`, `powershell.exe`, and `taskkill.exe` by
@@ -128,7 +128,7 @@ This build includes the P0–P3 review fixes from `CODE_REVIEW.md`:
   the sample cadence; the ICMP parser handles Windows' two-column tables;
   exception keys are ANDed; report text is stripped of ANSI/C0/C1; deferred
   restore keeps the newest items.
-- **Findings schema (L7) fixed.** Every `soc_findings.jsonl` record carries
+- **Findings schema (L7) fixed.** Every `data/soc_findings.jsonl` record carries
   `schema_version`; one-generation log rotation is documented.
 - **Configuration and reporting follow-up (M11/M12/H2/M6) fixed.** Thresholds
   and agent settings are type-checked and range-clamped at startup, dead YAML
@@ -154,7 +154,7 @@ This build includes the P0–P3 review fixes from `CODE_REVIEW.md`:
   layers. The two YAML switches remain independently tunable when the flag is
   absent.
 
-Remaining known issues (details and evidence in `CODE_REVIEW.md`):
+Remaining known issues (details and evidence in `docs/internal/CODE_REVIEW.md`):
 
 - **Dashboard residual (U2/U3, High).** The install directory still inherits
   `Authenticated Users: Modify` from `C:\` on a default install, and the UI
@@ -194,7 +194,7 @@ Remaining known issues (details and evidence in `CODE_REVIEW.md`):
   the last line of defense.
 - **Remaining residual P3.** The install-directory ACL reset is an operator
   step; active probes partially mitigate upstream blindness but cannot prove
-  an upstream DDoS or see pre-NIC drops. Both are tracked in `CODE_REVIEW.md`.
+  an upstream DDoS or see pre-NIC drops. Both are tracked in `docs/internal/CODE_REVIEW.md`.
 
 ---
 
@@ -217,15 +217,12 @@ Create the environment from the lockfile (recommended):
 uv sync --frozen
 ```
 
-Or, if `uv` is not available:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -e .
-```
+`uv` is required: the project is a uv virtual project with no build-system
+metadata, so `pip install -e .` is not supported. Install uv from
+<https://docs.astral.sh/uv/> and run `uv sync --frozen`.
 
 If your model tags differ, update `agent.model` / `agent.escalation_model` in
-`netstat_baseline_rules.yaml` or pass `--model` / `--escalation-model`.
+`config/netstat_baseline_rules.yaml` or pass `--model` / `--escalation-model`.
 
 ---
 
@@ -235,15 +232,15 @@ If your model tags differ, update `agent.model` / `agent.escalation_model` in
 Copy the sanitized example and tune it for your host:
 
 ```powershell
-Copy-Item netstat_baseline_rules.example.yaml netstat_baseline_rules.yaml
+Copy-Item config\netstat_baseline_rules.example.yaml config\netstat_baseline_rules.yaml
 ```
 
 The example contains generic Windows defaults. Add your own application ports,
 service PIDs, and trusted ranges before starting the agent. Keep the live
-`netstat_baseline_rules.yaml` local (do not commit it). See
+`config/netstat_baseline_rules.yaml` local (do not commit it). See
 `docs/PUBLIC_LAUNCH.md` for the data-sanitization checklist.
 
-From `C:\SOCAgent`:
+From the repository root:
 
 ```powershell
 # One scan and exit
@@ -256,7 +253,7 @@ From `C:\SOCAgent`:
 .venv\Scripts\python.exe checkstat.py --once --no-ai --no-toast
 
 # Replay saved RAW NETSTAT SNAPSHOT blocks
-.venv\Scripts\python.exe checkstat.py --file netstat_snapshot.log
+.venv\Scripts\python.exe checkstat.py --file data\netstat_snapshot.log
 
 # Dashboard
 .venv\Scripts\python.exe soc_ui.py
@@ -266,9 +263,9 @@ From `C:\SOCAgent`:
 the 1 s gauge, then exits. The first AI run may take longer while Ollama loads
 the model.
 
-**Scheduled runs:** use `--once --no-toast`, start in `C:\SOCAgent`, and run
+**Scheduled runs:** use `--once --no-toast`, start in the repository root, and run
 unelevated. Toasts are unavailable to non-interactive tasks; use the report,
-`soc_findings.jsonl`, and the dashboard instead. Do not add "run with highest
+`data\soc_findings.jsonl`, and the dashboard instead. Do not add "run with highest
 privileges"; SOCA is designed to run unelevated.
 
 ---
@@ -310,7 +307,7 @@ configuration/file errors, `2` command-line usage errors.
 
 The enabled row rules are `NET-001`, `NET-002`, `NET-007`, and `NET-009`. The
 other `NET-*` entries in the YAML are disabled design notes or require
-operators the engine does not implement; see `IMPLEMENTATION_GUIDE.md`.
+operators the engine does not implement; see `docs/IMPLEMENTATION_GUIDE.md`.
 
 ---
 
@@ -350,10 +347,10 @@ Deferred triage of a fast-lane finding never toasts on its own.
 traffic verdicts use `traffic_verdict_cache_hours` (default 1, clamped to the
 row TTL). Failed, deferred, heuristic, or escalation-skipped verdicts are
 retried after 30 minutes. Occurrence counts and cooldowns live in a separate
-alert-state section of `soc_verdict_cache.json`, so they survive verdict expiry
+alert-state section of `data/soc_verdict_cache.json`, so they survive verdict expiry
 and replacement. Changing the model names or escalation severity list changes
 the cache key; changing rule thresholds does not, so delete
-`soc_verdict_cache.json` after editing detection rules.
+`data/soc_verdict_cache.json` after editing detection rules.
 
 ---
 
@@ -384,7 +381,7 @@ states this. Router/ISP telemetry and packet capture remain out of scope.
 
 Targets must be IP literals (IPv4 uses ICMP; IPv6 and blocked-ICMP paths use
 TCP). Disable the feature with `--no-network-probes` or
-`network_health.enabled: false`. See `IMPLEMENTATION_GUIDE.md` for thresholds
+`network_health.enabled: false`. See `docs/IMPLEMENTATION_GUIDE.md` for thresholds
 and failure handling.
 
 ---
@@ -476,7 +473,7 @@ network-health lane (every 60 s)
   unavailable. It uses a disabled verdict cache and a non-persisting intel
   provider, ignores the live process table, and never toasts.
 
-See `IMPLEMENTATION_GUIDE.md` for the data flow, cache keys, and algorithm
+See `docs/IMPLEMENTATION_GUIDE.md` for the data flow, cache keys, and algorithm
 details.
 
 ---
@@ -549,7 +546,7 @@ Behaviour notes:
 
 ## Configuration
 
-All settings live in `netstat_baseline_rules.yaml`. CLI flags override the
+All settings live in `config/netstat_baseline_rules.yaml`. CLI flags override the
 `agent` values. The YAML is the source of truth for thresholds; the block below
 is a summary, not a second copy of the file.
 
@@ -662,8 +659,9 @@ traffic_detection:
   `ai_enabled: "false"` exits with a precise `Invalid configuration ...`
   message instead of failing inside every scan. Out-of-range numbers are
   clamped (for example, `scan_interval_seconds` below 15 becomes 15).
-- `history_file` must resolve inside the project directory; an absolute or
-  `..` path outside it is rejected at startup.
+- `history_file` must resolve inside the data directory (`data/`, or
+  `SOCA_DATA_DIR`); relative paths are anchored there and absolute paths are
+  rejected at startup.
 - `max_enrichment_checks_per_run` and `enrichment_budget_seconds` cap serial
   RDAP/WHOIS/rDNS lookups per scan. Groups over budget are reported with a
   minimal deterministic intel record, and their verdict is not cached, so a
@@ -685,15 +683,15 @@ traffic_detection:
 
 | File | Contents | Retention |
 |---|---|---|
-| `local_soc_agent.log` | Human-readable reports, hostname/local IP, findings | Appended; rotated at 10 MB, one previous generation |
-| `netstat_snapshot.log` | Raw `netstat` output including local/remote IPs and PIDs | Rotated at 10 MB, one previous generation |
-| `soc_findings.jsonl` | One JSON record per anomaly group or traffic finding: host, IPs, process paths, WHOIS, model reasoning | Rotated at 10 MB, one previous generation |
-| `soc_verdict_cache.json` | Verdicts, occurrence/cooldown alert state, cached intel | TTL-based (row 24 h; traffic 1 h default) |
-| `soc_intel_cache.json` | WHOIS/RDAP and reverse-DNS cache, including abuse contacts | TTL-based; pruned on save and capped at 2,000 entries |
-| `soc_traffic_history.jsonl` | Rolling traffic samples, including per-process names and connection counts | Trimmed at startup to `max_history_samples` (default 1,800) after exceeding twice that; capped/rotated at 64 MB |
-| `soc_ui_agent_state.json` | Dashboard PID bookkeeping (ephemeral) | Removed on clean stop |
-| `soc_network_health.json` | Latest gateway/external probe result (RTT, loss, verdict) | Overwritten every probe interval; read by the dashboard; 64 KiB cap |
-| `soc_user_allowlist.json` | User-confirmed false positives (compound scope, expiry, guards) created from the dashboard | Active until removed/expired; disabled entries pruned after 90 days |
+| `data/local_soc_agent.log` | Human-readable reports, hostname/local IP, findings | Appended; rotated at 10 MB, one previous generation |
+| `data/netstat_snapshot.log` | Raw `netstat` output including local/remote IPs and PIDs | Rotated at 10 MB, one previous generation |
+| `data/soc_findings.jsonl` | One JSON record per anomaly group or traffic finding: host, IPs, process paths, WHOIS, model reasoning | Rotated at 10 MB, one previous generation |
+| `data/soc_verdict_cache.json` | Verdicts, occurrence/cooldown alert state, cached intel | TTL-based (row 24 h; traffic 1 h default) |
+| `data/soc_intel_cache.json` | WHOIS/RDAP and reverse-DNS cache, including abuse contacts | TTL-based; pruned on save and capped at 2,000 entries |
+| `data/soc_traffic_history.jsonl` | Rolling traffic samples, including per-process names and connection counts | Trimmed at startup to `max_history_samples` (default 1,800) after exceeding twice that; capped/rotated at 64 MB |
+| `data/soc_ui_agent_state.json` | Dashboard PID bookkeeping (ephemeral) | Removed on clean stop |
+| `data/soc_network_health.json` | Latest gateway/external probe result (RTT, loss, verdict) | Overwritten every probe interval; read by the dashboard; 64 KiB cap |
+| `data/soc_user_allowlist.json` | User-confirmed false positives (compound scope, expiry, guards) created from the dashboard | Active until removed/expired; disabled entries pruned after 90 days |
 
 These files are **plaintext** and contain network inventory and process data.
 They are excluded by `.gitignore`; do not commit or share the directory without
@@ -706,10 +704,10 @@ disable with `--no-network-probes` or `network_health.enabled: false`.
 **Complete reset** (destructive; this deletes evidence):
 
 ```powershell
-Remove-Item soc_verdict_cache.json, soc_intel_cache.json, soc_findings.jsonl, `
-            soc_traffic_history.jsonl, local_soc_agent.log, `
-            netstat_snapshot.log, soc_ui_agent_state.json, `
-            soc_network_health.json `
+Remove-Item data\soc_verdict_cache.json, data\soc_intel_cache.json, `
+            data\soc_findings.jsonl, data\soc_traffic_history.jsonl, `
+            data\local_soc_agent.log, data\netstat_snapshot.log, `
+            data\soc_ui_agent_state.json, data\soc_network_health.json `
             -ErrorAction SilentlyContinue
 ```
 
@@ -751,7 +749,7 @@ configured anchors; adjust targets or thresholds in `network_health`.
 `trusted_remote_networks`, legitimate ports to `baseline.application_ports`, or
 rule exceptions. Prefer narrow image names over wildcards; name-based
 exceptions require executable identity evidence by default. Delete
-`soc_verdict_cache.json` after rule changes.
+`data/soc_verdict_cache.json` after rule changes.
 
 For a single noisy finding (for example NET-T10 while streaming video), use
 **Mark false positive** on the finding card instead. The preview always shows
@@ -761,16 +759,16 @@ spells out the full match scope (for NET-T10: every sighting where the process
 owns at least 50% of UDP sockets and the rate is below the band — not just the
 clicked record). An ineligible finding explains why and how to proceed. Muted
 cards show the covering entry's scope, reason, and expiry. The dashboard creates a
-scoped exception in `soc_user_allowlist.json`: the rule, the identity-verified
+scoped exception in `data/soc_user_allowlist.json`: the rule, the identity-verified
 owning process (all PIDs of that process are aggregated), and a rate band (or
 endpoint for row rules). It expires after 7/30/90 days (default 30) and
 CRITICAL findings cannot be muted. The finding is still written to
-`soc_findings.jsonl`; the dashboard hides it from the normal views and keeps it
+`data/soc_findings.jsonl`; the dashboard hides it from the normal views and keeps it
 under the **MUTED** filter. Safety guards reopen it automatically on a severity
 increase, a rate above the mute band, UDP errors, a different process owning the
 traffic, an unverifiable process identity, a co-firing flood/scan rule, or
 baseline drift. Allow-list changes apply without restarting the agent; edits to
-`netstat_baseline_rules.yaml` still require a restart.
+`config/netstat_baseline_rules.yaml` still require a restart.
 
 Use the **Allow-list** button next to the findings filter to:
 - **Deactivate** an entry (reversible; the entry remains for reference),
@@ -808,13 +806,14 @@ conflict.
 
 ## Testing
 
-Run from `C:\SOCAgent` with the project venv:
+Run from the repository root:
 
 ```powershell
-.venv\Scripts\python.exe -B test_parser.py          # offline: parser, rules, guardrails, triage
-.venv\Scripts\python.exe -B test_ui_runner.py       # offline: runner, validation, paths, tailers
-.venv\Scripts\python.exe -B test_network_health.py  # offline: probes, verdicts, monitor (mocked)
-.venv\Scripts\python.exe -B test_netapi.py          # live: iphlpapi/netstat; may be flaky
+# Offline suite: parser, dashboard, allow-list, network health, chat
+uv run python -m unittest discover -s tests -t . -v
+
+# Live iphlpapi/netstat checks; may be flaky
+uv run python -m unittest tests.test_netapi -v
 ```
 
 `test_netapi.py` includes live tests and can fail on table churn; a failure is
@@ -834,32 +833,40 @@ monitor lifecycle, and result-file bounds.
 ## Project layout and release status
 
 ```text
-checkstat.py                  Unified agent (CLI, parser, rules, traffic, triage)
-netapi.py                     Direct unelevated iphlpapi capture for the sampler
-soc_ui.py                     Localhost dashboard and process runner
-install_security.py          Install-ACL/elevation warnings and process-principal probes
-network_health.py            Active gateway/external probes and symptom classification
-static/                       Dashboard assets (index.html, app.css, app.js)
-netstat_baseline_rules.yaml   Baseline, rules, traffic thresholds, agent config
-test_parser.py                Offline parser/rule/triage tests
-test_netapi.py                Live and helper tests for netapi / fast lane
-test_ui_runner.py             Offline dashboard runner/validation tests
-test_network_health.py        Offline network-health probe/verdict/monitor tests
+checkstat.py                  Thin launcher -> soca.agent.checkstat
+soc_ui.py                     Thin launcher -> soca.ui.soc_ui
+soca/
+  paths.py                    Single source of filesystem paths
+  agent/checkstat.py          Unified agent (CLI, parser, rules, traffic, triage)
+  agent/netapi.py             Direct unelevated iphlpapi capture for the sampler
+  core/install_security.py    Install-ACL/elevation warnings and process probes
+  core/network_health.py      Active gateway/external probes and classification
+  core/user_allowlist.py      Scoped user allow-list schema, matching, persistence
+  ui/soc_ui.py                Localhost dashboard and process runner
+  ui/finding_chat.py          Read-only per-finding chat backend
+  ui/static/                  Dashboard assets (index.html, app.css, app.js)
+config/
+  netstat_baseline_rules.example.yaml  Sanitized example (tracked)
+  netstat_baseline_rules.yaml          Live, host-tuned baseline (ignored)
+data/                         Runtime logs, findings, caches, allow-list (ignored)
+tests/                        Offline and dashboard test suites
+docs/                         Implementation guide and public-launch checklist
+docs/internal/                Local review notes (ignored, not published)
+scripts/check_sensitive_data.py  Pre-commit sensitive-data scanner
+.githooks/pre-commit          Runs the scanner on staged changes
 README.md                     This file
-IMPLEMENTATION_GUIDE.md       Developer/architecture reference
-CODE_REVIEW.md                Formal code review and security assessment
-.gitignore                    Excludes runtime artifacts and the venv
-.venv/                        Local virtual environment (ignored, not shipped)
 ```
 
-Generated at runtime and ignored: `local_soc_agent.log`,
-`netstat_snapshot.log`, `soc_findings.jsonl`, `soc_traffic_history.jsonl`,
-`soc_verdict_cache.json`, `soc_intel_cache.json`, `soc_ui_agent_state.json`,
-`soc_network_health.json`, `soc_user_allowlist.json`.
+Generated at runtime and ignored: everything under `data/` (logs, snapshots,
+findings, traffic history, verdict/intel caches, agent state, network health,
+and the user allow-list). The live `config/netstat_baseline_rules.yaml` is also
+ignored.
 
 **Release status:** personal alpha. No LICENSE, CI, or SECURITY policy is
-included in this pass. The project is not currently a git repository; the
-`.gitignore` is provided for when it becomes one.
+included in this pass. The sanitized tree is version-controlled locally; create
+the public repository as private first and flip visibility only after
+`docs/PUBLIC_LAUNCH.md` passes. Internal review notes live in
+`docs/internal/CODE_REVIEW.md` and are gitignored.
 
-*Last verified against the follow-up-pass source hashes in `CODE_REVIEW.md`
-Appendix D on 2026-11-01.*
+*Last verified against the follow-up-pass source hashes in
+`docs/internal/CODE_REVIEW.md` Appendix D on 2026-11-01.*

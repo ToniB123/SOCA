@@ -1,6 +1,6 @@
 """Integration tests for allow-list enforcement in checkstat.py.
 
-Run with:  python -m unittest test_allowlist_integration.py
+Run with:  uv run python -m unittest tests.test_allowlist_integration -v
 """
 
 import json
@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import checkstat as soc
-import user_allowlist as u
+from soca.agent import checkstat as soc
+from soca.core import user_allowlist as u
 
 
 def _options():

@@ -1,6 +1,6 @@
 """Offline tests for the scoped user allow-list.
 
-Run with:  python -m unittest test_user_allowlist.py
+Run with:  uv run python -m unittest tests.test_user_allowlist -v
 """
 
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-import user_allowlist as u
+from soca.core import user_allowlist as u
 
 # ---------------------------------------------------------------------------
 # Builders

@@ -31,3 +31,6 @@ select = [
     "RUF",             # ruff-specific
     "PLW1510",         # subprocess.run without explicit check=
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["soca"]

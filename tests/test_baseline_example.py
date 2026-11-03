@@ -1,6 +1,6 @@
 """Validate the sanitized baseline example used by a clean clone.
 
-Run with:  python -m unittest test_baseline_example.py
+Run with:  uv run python -m unittest tests.test_baseline_example -v
 """
 
 import unittest
@@ -8,10 +8,11 @@ from pathlib import Path
 
 import yaml
 
-import checkstat as soc
-import soc_ui as ui
+from soca.agent import checkstat as soc
+from soca.ui import soc_ui as ui
 
-EXAMPLE = Path(__file__).with_name("netstat_baseline_rules.example.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
 
 
 class BaselineExampleTests(unittest.TestCase):

@@ -33,6 +33,12 @@ credentials*
 *.sqlite
 *.db
 
+# Runtime data moved out of the source tree
+data/
+
+# Internal review notes
+docs/internal/
+
 # Runtime artifacts (contain host, network, process, and WHOIS data)
 *.log
 local_soc_agent.log

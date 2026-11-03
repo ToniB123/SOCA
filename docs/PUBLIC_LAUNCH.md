@@ -1,14 +1,15 @@
 # Public launch checklist
 
 The repository is intentionally sanitized from its first commit: the live,
-host-tuned `netstat_baseline_rules.yaml`, runtime logs/findings/caches, and
-`CODE_REVIEW.md` are gitignored. Run this checklist before changing the GitHub
-repository from private to public.
+host-tuned `config/netstat_baseline_rules.yaml`, everything under `data/`
+(runtime logs, findings, caches, allow-list), and the internal
+`docs/internal/CODE_REVIEW.md` are gitignored. Run this checklist before
+changing the GitHub repository from private to public.
 
 ## 1. Scan the working tree
 
 ```powershell
-python scripts/check_sensitive_data.py --tree
+uv run python scripts/check_sensitive_data.py --tree
 ```
 
 Fix every finding. Do not use `git add -f` for a local-only file.
@@ -16,14 +17,16 @@ Fix every finding. Do not use `git add -f` for a local-only file.
 ## 2. Scan the staged content and the history
 
 ```powershell
-python scripts/check_sensitive_data.py --staged
+uv run python scripts/check_sensitive_data.py --staged
 git log --all --stat --oneline
-git log --all -p -- netstat_baseline_rules.yaml CODE_REVIEW.md
+git log --all -p -- netstat_baseline_rules.yaml config/netstat_baseline_rules.yaml `
+    CODE_REVIEW.md docs/internal/CODE_REVIEW.md
 ```
 
-The last command must produce no output. Review the history for logs, `*.jsonl`,
-`*.log`, caches, allow-list files, `.env` files, keys, emails, machine names,
-personal paths, and private IPs.
+The last command must produce no output for the live baseline and review
+notes. Review the history for logs, `*.jsonl`, `*.log`, caches, allow-list
+files, `.env` files, keys, emails, machine names, personal paths, and private
+IPs.
 
 ## 3. If anything sensitive was ever committed
 
@@ -41,22 +44,27 @@ Do not make the old repository public until the history is clean.
 Copy only the tracked files into a temporary directory, then:
 
 ```powershell
-Copy-Item netstat_baseline_rules.example.yaml netstat_baseline_rules.yaml
+Copy-Item config\netstat_baseline_rules.example.yaml config\netstat_baseline_rules.yaml
+uv sync --frozen
 uv run ruff check .
-uv run python -m unittest
+uv run python -m unittest discover -s tests -t .
 ```
 
-Confirm the app starts, the dashboard loads, and tests pass without the live
-tuned baseline or any runtime artifact.
+Confirm the app starts (`uv run python checkstat.py --list-rules` and
+`uv run python soc_ui.py --no-browser`), the dashboard loads, and tests pass
+without the live tuned baseline or any runtime artifact. The agent creates
+`data/` on first run.
 
 ## 5. Documentation review
 
-- `README.md` and `IMPLEMENTATION_GUIDE.md` contain no host-specific examples,
-  personal identifiers, or observed network statistics.
-- The README quickstart tells users to copy the example baseline and tune it
-  before running.
-- `docs/PUBLIC_LAUNCH.md` and `SECURITY.md` (if present) explain that all data
-  is local and that logs/findings must never be committed.
+- `README.md`, `docs/IMPLEMENTATION_GUIDE.md`, and `docs/PUBLIC_LAUNCH.md`
+  contain no host-specific examples, personal identifiers, or observed network
+  statistics.
+- The README quickstart tells users to copy
+  `config/netstat_baseline_rules.example.yaml` to
+  `config/netstat_baseline_rules.yaml` and tune it before running.
+- `docs/PUBLIC_LAUNCH.md` explains that all data stays local and that logs and
+  findings must never be committed.
 
 ## 6. Repository settings
 

@@ -1,6 +1,6 @@
 """Offline tests for the read-only finding chat (finding_chat.py + route).
 
-Run with:  python -m unittest test_finding_chat.py
+Run with:  uv run python -m unittest tests.test_finding_chat -v
 """
 
 import json
@@ -9,8 +9,8 @@ import urllib.error
 from email.message import Message
 from unittest import mock
 
-import finding_chat
-import soc_ui as ui
+from soca.ui import finding_chat
+from soca.ui import soc_ui as ui
 
 TOKEN = "unit-test-token-0123456789abcdef"
 

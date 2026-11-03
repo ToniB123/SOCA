@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for the soc_ui.py dashboard backend.
 
-Run with:  python test_ui_runner.py
+Run with:  uv run python -m unittest tests.test_ui_runner -v
 These tests are offline: no agent process is spawned and no network call is
 made. Temp files live in system temp directories; the path-containment tests
 may create a temporary directory junction with cmd.exe, and the replay test
@@ -22,11 +22,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import checkstat as soc
-import install_security
-import soc_ui as ui
+from soca.agent import checkstat as soc
+from soca.core import install_security
+from soca.ui import soc_ui as ui
 
-RULES_FILE = Path(__file__).with_name("netstat_baseline_rules.example.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RULES_FILE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
 
 
 def _write_lines(path: Path, *lines: str) -> None:
@@ -68,7 +69,7 @@ class ArgvRoundTripTests(unittest.TestCase):
             "num_ctx": 2048, "keep_alive": "15m", "cache_hours": 2.5,
             "no_escalation": True, "no_whois": True,
             "include_private_remotes": True, "verbose": True,
-            "rules_path": "netstat_baseline_rules.example.yaml",
+            "rules_path": "config/netstat_baseline_rules.example.yaml",
             "ollama_url": "http://127.0.0.1:11434/api/generate",
         })
         self.assertEqual(errors, [])
@@ -323,6 +324,13 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(snapshot["state"], ui.STATE_RUNNING)
         self.assertEqual(snapshot["pid"], self.PID)
         self.assertFalse(snapshot["attached"])
+
+    def test_zero_argument_adoption_uses_current_state_alias(self):
+        self._write_state()
+        self._install_process_mocks()
+        with mock.patch.object(ui, "STATE_FILE", self.state_file):
+            self.assertTrue(ui.try_adopt_orphan(self.runner, self.console))
+        self.assertEqual(self.runner.pid, self.PID)
 
     def test_rejects_missing_process(self):
         self._write_state()

@@ -22,6 +22,9 @@ identifiers, and treats synthetic test fixtures specially:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import getpass
+import os
 import re
 import subprocess
 import sys
@@ -29,12 +32,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".venv", "__pycache__", ".ruff_cache", ".idea", "archive"}
+SKIP_DIRS = {".git", ".venv", "__pycache__", ".ruff_cache", ".idea", "archive", "data"}
 SKIP_FILES = {
     "scripts/check_sensitive_data.py",
     ".githooks/pre-commit",
     # The scanner's own tests contain synthetic personal paths/names.
-    "test_sensitive_scan.py",
+    "tests/test_sensitive_scan.py",
 }
 DOC_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
 SYNTHETIC_PRIVATE_IPS = {
@@ -93,7 +96,34 @@ TOKEN_RES = (
 )
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 MACHINE_RE = re.compile(r"\b(?:DESKTOP|LAPTOP)-[A-Z0-9]{6,}\b", re.IGNORECASE)
-USERNAME_RE = re.compile(r"\boperator\b", re.IGNORECASE)
+USERNAME_ALLOW = USER_PATH_ALLOW | {
+    "root",
+    "runner",
+    "user",
+    "admin",
+    "administrator",
+}
+
+
+def _username_tokens() -> set[str]:
+    """Return escaped names that identify the current operator."""
+    names: set[str] = set()
+    candidates = [os.environ.get("USERNAME"), os.environ.get("USER")]
+    with contextlib.suppress(OSError):
+        candidates.append(getpass.getuser())
+    for candidate in candidates:
+        name = (candidate or "").strip()
+        if name and name.lower() not in USERNAME_ALLOW:
+            names.add(re.escape(name))
+    return names
+
+
+_USERNAME_TOKENS = _username_tokens()
+USERNAME_RE = (
+    re.compile(r"\b(?:" + "|".join(sorted(_USERNAME_TOKENS)) + r")\b", re.IGNORECASE)
+    if _USERNAME_TOKENS
+    else re.compile(r"(?!)")
+)
 USER_PATH_RE = re.compile(r"[A-Za-z]:[\\/]Users[\\/]([^\\/\s\"']+)", re.IGNORECASE)
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 

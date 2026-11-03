@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for the unified checkstat.py SOC agent.
 
-Run with:  python test_parser.py
+Run with:  uv run python -m unittest tests.test_parser -v
 These tests are offline: no netstat, WHOIS, DNS, or Ollama calls are made.
 """
 
@@ -16,9 +16,10 @@ import unittest.mock
 from pathlib import Path
 from typing import Any, ClassVar
 
-import checkstat as soc
+from soca.agent import checkstat as soc
 
-RULES_FILE = Path(__file__).with_name("netstat_baseline_rules.example.yaml")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RULES_FILE = REPO_ROOT / "config" / "netstat_baseline_rules.example.yaml"
 
 SNAPSHOT = """
   Proto  Local Address          Foreign Address        State           PID
@@ -3832,26 +3833,26 @@ class IntelCacheMaintenanceTests(unittest.TestCase):
 
 
 class HistoryFileOptionTests(unittest.TestCase):
-    """E8: history_file cannot read or truncate files outside the project."""
+    """E8: history_file cannot read or truncate files outside the data dir."""
 
-    def test_default_and_relative_paths_resolve_under_script_dir(self):
+    def test_default_and_relative_paths_resolve_under_data_dir(self):
         default = soc.build_traffic_options({})
         self.assertEqual(
             default["history_path"],
-            (soc.SCRIPT_DIR / "soc_traffic_history.jsonl").resolve(),
+            (soc.DATA_DIR / "soc_traffic_history.jsonl").resolve(),
         )
         relative = soc.build_traffic_options(
             {"traffic_detection": {"history_file": "var/soc_history.jsonl"}}
         )
         self.assertEqual(
             relative["history_path"],
-            (soc.SCRIPT_DIR / "var" / "soc_history.jsonl").resolve(),
+            (soc.DATA_DIR / "var" / "soc_history.jsonl").resolve(),
         )
 
     def test_absolute_history_path_outside_project_is_rejected(self):
-        outside = str(soc.SCRIPT_DIR.parent / "soc_history_outside.jsonl")
+        outside = str(soc.DATA_DIR.parent / "soc_history_outside.jsonl")
         self.assertFalse(
-            Path(outside).resolve().is_relative_to(soc.SCRIPT_DIR.resolve())
+            Path(outside).resolve().is_relative_to(soc.DATA_DIR.resolve())
         )
         with self.assertRaises(ValueError):
             soc.build_traffic_options(
@@ -3859,7 +3860,7 @@ class HistoryFileOptionTests(unittest.TestCase):
             )
         # The option is project-relative, so even an absolute path that happens
         # to point inside SCRIPT_DIR is rejected.
-        inside = str(soc.SCRIPT_DIR / "soc_traffic_history.jsonl")
+        inside = str(soc.DATA_DIR / "soc_traffic_history.jsonl")
         with self.assertRaises(ValueError):
             soc.build_traffic_options(
                 {"traffic_detection": {"history_file": inside}}
@@ -4440,6 +4441,8 @@ class ReplayMainWiringTests(unittest.TestCase):
                         "--no-traffic",
                         "--no-whois",
                         "--no-rdns",
+                        "--rules",
+                        str(RULES_FILE),
                     ]
                 )
             report = (root / "agent.log").read_text(encoding="utf-8")
