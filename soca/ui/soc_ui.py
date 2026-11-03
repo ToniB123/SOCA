@@ -1472,7 +1472,7 @@ class AgentRunner:
 
 
 def try_adopt_orphan(
-    runner: AgentRunner, console: ConsoleLog, state_file: Path = STATE_FILE
+    runner: AgentRunner, console: ConsoleLog, state_file: Path | None = None
 ) -> bool:
     """Adopt a child left running by a previous dashboard session.
 

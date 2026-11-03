@@ -255,7 +255,7 @@ The P0–P3 review items were fixed in these post-review passes:
 - **E6/E7/E8/E9 fixed:** `VerdictCache` is lock-protected; the traffic AI has a
   per-scan circuit breaker; corrupt verdict/intel cache entries are dropped and
   the JSON writer tolerates non-serializable fields; `history_file` is confined
-  to the project; enrichment has per-scan count/time budgets, and the intel
+  to the data directory; enrichment has per-scan count/time budgets, and the intel
   cache is pruned and capped. Budget-skipped groups are reported with minimal
   intel and are not cached, so a later scan can backfill.
 - **U6–U12 fixed (dashboard):** Ollama URLs are loopback-only by default
@@ -426,7 +426,7 @@ here.
 | `traffic_detection.baseline_window_seconds`, `baseline_guard_seconds`, `baseline_percentile` | Evaluator | 900 / 60 / 25; triggered samples excluded |
 | `traffic_detection.min_baseline_samples`, `min_rate_seconds` | Evaluator | 6 / 5 |
 | `traffic_detection.window_seconds` | Legacy | Fallback for hand-built options; not the live baseline window |
-| `traffic_detection.history_file`, `max_history_samples` | Persistence | Must resolve inside the project; 1,800 default; auto-raised for the window; capped at 20,000 |
+| `traffic_detection.history_file`, `max_history_samples` | Persistence | Must resolve inside `data/` (or `SOCA_DATA_DIR`); 1,800 default; auto-raised for the window; capped at 20,000 |
 | `traffic_detection.include_private_remotes` | Traffic layer | Independent YAML switch; `--include-private-remotes` (and the dashboard checkbox) overrides both layers to included |
 | `traffic_detection.bulk_transfer_processes`, `bulk_transfer_exempt_rules`, `bulk_transfer_min_share`, `bulk_transfer_min_rx_tx_ratio` | Traffic exemption | Allowlist entries are matched by name but require identity evidence |
 | `traffic_detection.bulk_transfer_verify_identity` | Traffic exemption | Must stay true for exemptions to apply; false denies |

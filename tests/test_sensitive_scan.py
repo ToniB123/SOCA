@@ -3,10 +3,13 @@
 Run with:  uv run python -m unittest tests.test_sensitive_scan -v
 """
 
+import getpass
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNER_PATH = REPO_ROOT / "scripts" / "check_sensitive_data.py"
@@ -47,9 +50,18 @@ class SensitiveScanTests(unittest.TestCase):
         self.assertIn("email", kinds("src.py", "user@corp.local"))
 
     def test_personal_path_and_name_are_flagged(self):
-        found = kinds("src.py", "C:\\Users\\operator\\secret.txt")
+        with mock.patch.object(
+            scan, "USERNAME_RE", re.compile(r"\bcaseuser\b", re.IGNORECASE)
+        ):
+            found = kinds("src.py", "C:\\Users\\caseuser\\secret.txt")
         self.assertIn("personal-path", found)
         self.assertIn("personal-username", found)
+
+    def test_username_pattern_tracks_runtime_user(self):
+        name = getpass.getuser()
+        if not name or name.lower() in scan.USERNAME_ALLOW:
+            self.skipTest("no operator-specific username")
+        self.assertIn("personal-username", kinds("src.py", f"owner={name}"))
 
     def test_public_path_is_allowed(self):
         self.assertNotIn(

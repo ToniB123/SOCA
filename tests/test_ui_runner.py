@@ -325,6 +325,13 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(snapshot["pid"], self.PID)
         self.assertFalse(snapshot["attached"])
 
+    def test_zero_argument_adoption_uses_current_state_alias(self):
+        self._write_state()
+        self._install_process_mocks()
+        with mock.patch.object(ui, "STATE_FILE", self.state_file):
+            self.assertTrue(ui.try_adopt_orphan(self.runner, self.console))
+        self.assertEqual(self.runner.pid, self.PID)
+
     def test_rejects_missing_process(self):
         self._write_state()
         self._install_process_mocks(exists=False)

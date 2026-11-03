@@ -883,7 +883,7 @@ MAX_HISTORY_SAMPLES = 20000
 
 
 def _resolve_history_path(value: Any) -> Path:
-    """Resolve traffic_detection.history_file inside the project directory.
+    """Resolve traffic_detection.history_file inside the data directory.
 
     The sampler reads this file at startup and may rewrite (truncate) it when
     it holds more than twice ``max_history_samples`` lines. Treating the

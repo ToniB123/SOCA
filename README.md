@@ -107,7 +107,7 @@ This build includes the P0–P3 review fixes from `docs/internal/CODE_REVIEW.md`
 - **Engine reliability (E6/E7/E8/E9) fixed.** `VerdictCache` is lock-protected;
   the traffic AI has a per-scan circuit breaker; corrupt verdict/intel cache
   entries are dropped instead of aborting scans; `history_file` is confined to
-  the project; enrichment has per-scan count/time budgets and the intel cache is
+  the data directory; enrichment has per-scan count/time budgets and the intel cache is
   pruned and capped.
 - **Absolute system binaries (U3) fixed.** `checkstat.py` and `soc_ui.py` invoke
   `netstat.exe`, `tasklist.exe`, `powershell.exe`, and `taskkill.exe` by
@@ -263,7 +263,7 @@ From the repository root:
 the 1 s gauge, then exits. The first AI run may take longer while Ollama loads
 the model.
 
-**Scheduled runs:** use `--once --no-toast`, start in `C:\SOCAgent`, and run
+**Scheduled runs:** use `--once --no-toast`, start in the repository root, and run
 unelevated. Toasts are unavailable to non-interactive tasks; use the report,
 `data\soc_findings.jsonl`, and the dashboard instead. Do not add "run with highest
 privileges"; SOCA is designed to run unelevated.
@@ -659,8 +659,9 @@ traffic_detection:
   `ai_enabled: "false"` exits with a precise `Invalid configuration ...`
   message instead of failing inside every scan. Out-of-range numbers are
   clamped (for example, `scan_interval_seconds` below 15 becomes 15).
-- `history_file` must resolve inside the project directory; an absolute or
-  `..` path outside it is rejected at startup.
+- `history_file` must resolve inside the data directory (`data/`, or
+  `SOCA_DATA_DIR`); relative paths are anchored there and absolute paths are
+  rejected at startup.
 - `max_enrichment_checks_per_run` and `enrichment_budget_seconds` cap serial
   RDAP/WHOIS/rDNS lookups per scan. Groups over budget are reported with a
   minimal deterministic intel record, and their verdict is not cached, so a
